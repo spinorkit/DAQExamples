@@ -1,3 +1,39 @@
+
+//https://www.arduino.cc/en/Hacking/PinMappingSAM3X
+
+/*
+Due Pin Number	SAM3X Pin Name	Mapped Pin Name	Max Output Current (mA)	Max Current Sink (mA) Function
+4	PA16	Analog In 0	3	6       AD7
+55	PA24	Analog In 1	3	6     AD6
+56	PA23	Analog In 2	3	6     AD5
+57	PA22	Analog In 3	3	6     AD4
+58	PA6	Analog In 4	3	6       AD3
+59	PA4	Analog In 5	3	6       AD2
+60	PA3	Analog In 6	3	6       AD1
+61	PA2	Analog In 7	3	6       AD0
+62	PB17	Analog In 8	3	6     AD10
+63	PB18	Analog In 9	3	6     AD11
+64	PB19	Analog In 10	3	6   AD12
+65	PB20	Analog In 11	3	6   AD13
+66	PB15	DAC0	3	6
+67	PB16	DAC1	3	6
+*/
+
+
+/**
+ SR/IRQ TC Channel	Due pins
+TC0	TC0	0	2, 13
+TC1	TC0	1	60, 61
+TC2	TC0	2	58
+TC3	TC1	0	none  <- this line in the example below
+TC4	TC1	1	none
+TC5	TC1	2	none
+TC6	TC2	0	4, 5
+TC7	TC2	1	3, 10
+TC8	TC2	2	11, 12
+*/
+
+
 const int ADC_FREQ = 10000;
 
 inline uint32_t saveIRQState(void)
@@ -12,6 +48,8 @@ inline void restoreIRQState(uint32_t pmask)
 {
 __set_PRIMASK(pmask);
 }
+
+
 
 void setup()
 {
@@ -147,11 +185,65 @@ void dac_write (int val)
 
 void adc_setup ()
 {
+/* 
+variant.cpp Arduino ADC initialization
+
+ // Initialize Analog Controller
+  pmc_enable_periph_clk(ID_ADC);
+  adc_init(ADC, SystemCoreClock, ADC_FREQ_MAX, ADC_STARTUP_FAST);
+  adc_configure_timing(ADC, 0, ADC_SETTLING_TIME_3, 1);
+  adc_configure_trigger(ADC, ADC_TRIG_SW, 0); // Disable hardware trigger.
+  adc_disable_interrupt(ADC, 0xFFFFFFFF); // Disable all ADC interrupts.
+  adc_disable_all_channel(ADC);
+
+*/
+  pmc_enable_periph_clk(ID_ADC);
+
+  /**
+ * \brief Initialize the given ADC with the specified ADC clock and startup time.
+ *
+ * \param p_adc Pointer to an ADC instance.
+ * \param ul_mck Main clock of the device (value in Hz).
+ * \param ul_adc_clock Analog-to-Digital conversion clock (value in Hz).
+ * \param uc_startup ADC start up time. Please refer to the product datasheet
+ * for details.
+ *
+ * \return 0 on success.
+ */
+  adc_init(ADC, VARIANT_MCK, ADC_FREQ_MAX, ADC_STARTUP_FAST);
+
+  /**
+ * \brief Configure ADC timing.
+ *
+ * \param p_adc Pointer to an ADC instance.
+ * \param uc_tracking ADC tracking time = uc_tracking / ADC clock.
+ * \param uc_settling Analog settling time = (uc_settling + 1) / ADC clock.
+ * \param uc_transfer Data transfer time = (uc_transfer * 2 + 3) / ADC clock.
+ * 
+void adc_configure_timing(Adc *p_adc, const uint8_t uc_tracking,
+		const enum adc_settling_time_t settling,const uint8_t uc_transfer) 
+
+    12-bit mode: tTRACK = 0.054 × ZSOURCE + 205
+With tTRACK expressed in ns and ZSOURCE expressed in ohms.
+I.e. 1kOhm source => 260 ns.
+
+tTRACK in nanoseconds 
+12 bit mode: 1/fS = tTRACK - 15 × tCP_ADC + 5 tCP_ADC
+
+Tracking Time = (TRACKTIM + 1) * ADCClock periods.
+Transfer Period = (TRANSFER * 2 + 3) ADCClock periods.
+
+ */
+
+  adc_configure_timing(ADC, 15, ADC_SETTLING_TIME_3, 1);
+
+
   NVIC_EnableIRQ (ADC_IRQn) ;   // enable ADC interrupt vector
   ADC->ADC_IDR = 0xFFFFFFFF ;   // disable interrupts
   ADC->ADC_IER = 0x80 ;         // enable AD7 End-Of-Conv interrupt (Arduino pin A0)
   ADC->ADC_CHDR = 0xFFFF ;      // disable all channels
-  ADC->ADC_CHER = 0x80 ;        // enable just A0
+  //ADC->ADC_CHER = 0x80 ;        // enable just A0
+  ADC->ADC_CHER = 0xc0 ;        // enable A1 and A0
   ADC->ADC_CGR = 0x15555555 ;   // All gains set to x1
   ADC->ADC_COR = 0x00000000 ;   // All offsets off
  
