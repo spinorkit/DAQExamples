@@ -1,0 +1,6 @@
+{
+    "board": "arduino:sam:arduino_due_x_dbg",
+    "port": "COM5",
+    "sketch": "Due\\DueADCFromTimer.ino",
+    "output": "../~~DAQExamplesBuild"
+}
