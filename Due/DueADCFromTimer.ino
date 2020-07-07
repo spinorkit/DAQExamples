@@ -34,7 +34,7 @@ TC8	TC2	2	11, 12
 */
 
 
-const int ADC_FREQ = 10000;
+const int ADC_FREQ = 10;
 
 inline uint32_t saveIRQState(void)
 {
@@ -266,14 +266,25 @@ extern "C"
 
 void ADC_Handler (void)
 {
-  if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
+if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
-    int val = *(ADC->ADC_CDR+7) ;    // get conversion result
-    samples [sptr] = val ;           // stick in circular buffer
-    sptr = (sptr+1) & BUFMASK ;      // move pointer
-    dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+  int val = *(ADC->ADC_CDR+6) ;    // get conversion result
+  samples [sptr] = val ;           // stick in circular buffer
+  sptr = (sptr+1) & BUFMASK ;      // move pointer
+  //dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+  Serial.print(val,HEX);
   }
-  isr_count ++ ;
+
+if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
+  {
+  int val = *(ADC->ADC_CDR+7) ;    // get conversion result
+  samples [sptr] = val ;           // stick in circular buffer
+  sptr = (sptr+1) & BUFMASK ;      // move pointer
+  dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+  Serial.print("\t");
+  Serial.println(val,HEX);
+  }
+isr_count ++ ;
 }
 
 #ifdef __cplusplus
@@ -351,8 +362,7 @@ void loop()
     {
     lastIsr = isr_count;
     int now = micros();
-    //isr_count = 0; 
-    Serial.println(String(printCount) + "  delay  "+ String(now- lastMicro));
+    //Serial.println(String(printCount) + "  delay  "+ String(now- lastMicro));
     ++printCount;
 
     // int printEnd = microsNoInt();
