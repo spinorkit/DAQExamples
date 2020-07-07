@@ -250,11 +250,148 @@ Transfer Period = (TRANSFER * 2 + 3) ADCClock periods.
   ADC->ADC_MR = (ADC->ADC_MR & 0xFFFFFFF0) | (1 << 1) | ADC_MR_TRGEN ;  // 1 = trig source TIO from TC0
 }
 
+template <class T, uint Log2Size>
+class RingBufferSized
+   {
+   public:
+      enum
+      {
+      kBufSize = 1<<Log2Size,
+      kLenMask = kBufSize-1,
+      };
+
+   RingBufferSized() : mIn(0),mOut(0)
+      {
+      }
+
+   void Clear()
+      {
+      mOut = mIn;
+      }
+
+   int GetCount() const
+   {
+   return (mIn-mOut) & kLenMask;
+   }
+
+   int GetSpace() const
+   {
+   return kLenMask - GetCount();
+   }
+
+   bool Push(T val)
+      {
+      if(GetSpace())
+         {
+         mBuffer[mIn++] = val;
+         mIn &= kLenMask;
+         return true;
+         }
+      return false;
+      }
+
+   //Returns num pushed
+   int Push(const T *val, int nToPushIn)
+      {
+      int nToPushRemain = nToPushIn;
+      int space = GetSpace();
+
+      if(nToPushRemain > space)
+         nToPushRemain = space; //limit to available space
+      else
+         space = nToPushIn; //space is now number that will be pushed
+
+      if(nToPushRemain)
+         {//There is space
+         int lenToCopy1 = (kBufSize-mIn); //space available before wrapping
+         if(lenToCopy1 > nToPushRemain)
+            lenToCopy1 = nToPushRemain;
+         memcpy(mBuffer+mIn,val,lenToCopy1*sizeof(T));
+         mIn += lenToCopy1;
+         mIn &= kLenMask;
+         nToPushRemain -= lenToCopy1;
+         if(nToPushRemain)
+            {//still some left to copy, wrap to start of buffer
+            memcpy(mBuffer,val+lenToCopy1,nToPushRemain*sizeof(T));
+            mIn += nToPushRemain;
+            mIn &= kLenMask;
+            }
+         }
+      return space; //Space is number pushed.
+      }
+
+
+   bool Get(T *val) const
+      {
+      if(GetCount())
+         {
+         *val = mBuffer[mOut];
+         return true;
+         }
+      return false;
+      }
+
+   const T& Get() const
+      {
+      return mBuffer[mOut];
+      }
+
+   const T& GetNext()
+      {
+      const T& result = mBuffer[mOut++];
+      mOut &= kLenMask;
+      return result;
+      }
+
+   bool GetNext(T *val)
+      {
+      if(GetCount())
+         {
+         *val = mBuffer[mOut++];
+         mOut &= kLenMask;
+         return true;
+         }
+      return false;
+      }
+
+   bool NextOut()
+      {
+      if(GetCount())
+         {
+         mOut++;
+         mOut &= kLenMask;
+         return true;
+         }
+      return false;
+      }
+
+   protected:
+   T mBuffer[kBufSize];
+   volatile int mIn;
+   volatile int mOut;
+   };
+
+
+
 // Circular buffer, power of two.
-#define BUFSIZE 0x400
-#define BUFMASK 0x3FF
-volatile int samples [BUFSIZE] ;
-volatile int sptr = 0 ;
+//#define BUFSIZE 0x400
+//#define BUFMASK 0x3FF
+
+const int kBufferSizeBytes = 32768;
+const int kADCChannels = 2; //must be power of 2 (for now)
+const int kBufferPoints = kBufferSizeBytes/kADCChannels;
+
+const int kLog2BufferSizeBytes = 15;
+const int kLog2ADCChannels = 1;
+const int kLog2BytesPerSample = 1;
+
+
+typedef RingBufferSized<int16_t, 10> TRingBuf;
+
+//volatile int gSampleBuffers[kBufferPoints][kADCChannels] ;
+TRingBuf gSampleBuffers[kADCChannels];
+
+//volatile int sptr = 0 ;
 volatile int isr_count = 0 ;   // this was for debugging
 volatile int lastIsr = 0 ;   // this was for debugging
 
@@ -268,18 +405,18 @@ void ADC_Handler (void)
 {
 if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
-  int val = *(ADC->ADC_CDR+6) ;    // get conversion result
-  samples [sptr] = val ;           // stick in circular buffer
-  sptr = (sptr+1) & BUFMASK ;      // move pointer
-  //dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+  int val = *(ADC->ADC_CDR+6);    // get conversion result
+  gSampleBuffers[0].Push(val);           // stick in circular buffer
+  //sptr = (sptr+1) & BUFMASK;      // move pointer
+  //dac_write (0xFFF & ~val);       // copy inverted to DAC output FIFO
   Serial.print(val,HEX);
   }
 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+7) ;    // get conversion result
-  samples [sptr] = val ;           // stick in circular buffer
-  sptr = (sptr+1) & BUFMASK ;      // move pointer
+  gSampleBuffers[1].Push(val);           // stick in circular buffer
+  //sptr = (sptr+1) & BUFMASK ;      // move pointer
   dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
   Serial.print("\t");
   Serial.println(val,HEX);
