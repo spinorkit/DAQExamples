@@ -124,16 +124,6 @@ setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
 dac_setup () ;        // setup up DAC auto-triggered at 48kHz
 }
 
-volatile boolean pinState;
-volatile int32_t gMilliSec;
-
-void TC3_Handler()
-{
-++gMilliSec;
-TC_GetStatus(TC1, 0);
-digitalWrite(12, pinState = !pinState);
-}
-
 
 void setup_pio_TIOA0 ()  // Configure Ard pin 2 as output from TC0 channel A (copy of trigger event)
 {
@@ -412,6 +402,7 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
 
 void StartSampling()
 {
+//TODO: restart the ADC timer here
 gState = kStartingSampling;
 }
 
@@ -533,10 +524,26 @@ if(rxAvail)
    int bytesRead = Serial.readBytesUntil('\n', cmdBuf, kMaxCommandLenBytes);
    auto cmd = cmdBuf[0];
    switch (cmd)
-         {
+      {
       case 'b':   //begin sampling
          StartSampling();
          break;
+      case 'f':   //first sample time
+         {
+         //Wait for up to 500 ms for first sample to arrive
+         for(int ms(0);gState < kSampling && ms < 500; ++ms)
+            delay(1);
+         if(gState < kSampling)
+            break;   
+         Serial.write('\n'); //Readability while testing only!
+
+         FirstSampleTimePacket ftPacket(gFirstADCPointus);
+         ftPacket.write(Serial);
+         gState = kSampling;
+
+         Serial.write('\n'); //Readability while testing only!
+         break;
+         }
       case 's':   //stop sampling
          StopSampling();
          break;
@@ -549,7 +556,7 @@ if(rxAvail)
          break;   
          }
       case 'v':   //version info
-         Serial.write("Lightning Arduino Example V0.9.0 $$$");
+         Serial.write("ArduinoRT Example V0.9.0 $$$");
          break;
       default:
          break;
@@ -562,13 +569,12 @@ if(gState == kIdle)
 
 if(gState == kHadFirstSample)
    {
-   Serial.write('\n'); //Readability while testing only!
-
-   FirstSampleTimePacket ftPacket(gFirstADCPointus);
-   ftPacket.write(Serial);
    gState = kSampling;
-   
-   Serial.write('\n'); //Readability while testing only!
+
+   // Serial.write('\n'); //Readability while testing only!
+   // FirstSampleTimePacket ftPacket(gFirstADCPointus);
+   // ftPacket.write(Serial);
+   // Serial.write('\n'); //Readability while testing only!
    }
 
 //Find the number of samples in the ringbuffer with the least samples
