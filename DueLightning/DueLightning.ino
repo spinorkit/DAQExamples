@@ -63,6 +63,29 @@ tc->TC_CHANNEL[channel].TC_IDR=~TC_IER_CPCS;
 NVIC_EnableIRQ(irq);
 }
 
+
+void startADCTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) 
+{
+pmc_set_writeprotect(false);
+pmc_enable_periph_clk((uint32_t)irq);
+
+TC_Stop(tc, channel);
+
+uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
+TC_SetRA(tc, channel, rc/2); //50% high, 50% low
+TC_SetRC(tc, channel, rc);
+
+TC_Configure(tc, channel, 
+   TC_CMR_TCCLKS_TIMER_CLOCK1 |           // use TCLK1 (prescale by 2, = 42MHz)
+   TC_CMR_WAVE |                          // waveform mode
+   TC_CMR_WAVSEL_UP_RC |                  // count-up PWM using RC as threshold
+   TC_CMR_EEVT_XC0 |                      // Set external events from XC0 (this setup TIOB as output)
+   TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR | TC_CMR_ACPC_SET
+   ); 
+
+TC_Start(tc, channel);
+}
+
 const int kADCPointsPerSec = 10;
 
 inline uint32_t saveIRQState(void)
@@ -91,41 +114,14 @@ volatile State gState = kIdle;
 
 void setup()
 {
-  Serial.begin (115200) ; // was for debugging
-  adc_setup () ;         // setup ADC
- 
- //Timer, channel, IRQ, Frequency
-//startTimer(TC0, 0, TC0_IRQn, kADCPointsPerSec);
+Serial.begin (115200) ; // was for debugging
+adc_setup () ;         // setup ADC
 
+//Timer, channel, IRQ, Frequency
+startADCTimer(TC0, 0, TC0_IRQn, kADCPointsPerSec);
 
-
-  pmc_enable_periph_clk (TC_INTERFACE_ID + 0*3+0);  // clock the TC0 channel 0
-
-  TcChannel * t = &(TC0->TC_CHANNEL)[0] ;    // pointer to TC0 registers for its channel 0
-  t->TC_CCR = TC_CCR_CLKDIS ;  // disable internal clocking while setup regs
-  t->TC_IDR = 0xFFFFFFFF ;     // disable interrupts
-  t->TC_SR ;                   // read int status reg to clear pending
-  t->TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK1 |   // use TCLK1 (prescale by 2, = 42MHz)
-              TC_CMR_WAVE |                  // waveform mode
-              TC_CMR_WAVSEL_UP_RC |          // count-up PWM using RC as threshold
-              TC_CMR_EEVT_XC0 |     // Set external events from XC0 (this setup TIOB as output)
-              TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR |
-              TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR ;
- 
- // t->TC_RC =  875 ;     // counter resets on RC, so sets period in terms of 42MHz clock
- // t->TC_RA =  440 ;     // roughly square wave
-  t->TC_RC =  VARIANT_MCK/2/kADCPointsPerSec;     // counter resets on RC, so sets period in terms of 42MHz clock
-  t->TC_RA =  VARIANT_MCK/2/kADCPointsPerSec/2 ;     // roughly square wave
-
-  t->TC_CMR = (t->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET ;  // set clear and set from RA and RC compares
- 
-  t->TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG ;  // re-enable local clocking and switch to hardware trigger source.
-
-
-  setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
-  dac_setup () ;        // setup up DAC auto-triggered at 48kHz
-
- // enableMicroSecClock();
+setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
+dac_setup () ;        // setup up DAC auto-triggered at 48kHz
 }
 
 volatile boolean pinState;
@@ -138,39 +134,6 @@ TC_GetStatus(TC1, 0);
 digitalWrite(12, pinState = !pinState);
 }
 
-
-
-
-
-//const int32_t kMilliSecRC = 84000000/2/1000; //42000
-#define kMilliSecRC 42000
-
-void enableMicroSecClock()
-{
-pinMode(12,OUTPUT);
-startTimer(TC1, 0, TC3_IRQn, 1000); //TC1 channel 0, the IRQ for that channel and the desired frequency
-
- //   TcChannel * t = &(TC1->TC_CHANNEL)[0] ;    // pointer to TC1 registers for its channel 0
-//   t->TC_CCR = TC_CCR_CLKDIS ;  // disable internal clocking while setup regs
-//   t->TC_IDR = 0xFFFFFFFF ;     // disable interrupts
-//   t->TC_SR ;                   // read int status reg to clear pending
-//   t->TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK1 |   // use TCLK1 (prescale by 2, = 42MHz)
-//               TC_CMR_WAVE |                  // waveform mode
-//               TC_CMR_WAVSEL_UP_RC |          // count-up PWM using RC as threshold
-//               TC_CMR_EEVT_XC0 |     // Set external events from XC0 (this setup TIOB as output)
-//               TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR |
-//               TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR ;
- 
-//  // t->TC_RC =  875 ;     // counter resets on RC, so sets period in terms of 42MHz clock
-//  // t->TC_RA =  440 ;     // roughly square wave
-//   t->TC_RC =  VARIANT_MCK/2/10000000;     // counter resets on RC, so sets period in terms of 42MHz clock
-//   t->TC_RA =  VARIANT_MCK/2/1000000/4 ;     
-
-//   t->TC_CMR = (t->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET ;  // set clear and set from RA and RC compares
- 
-//   t->TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG ;  // re-enable local clocking and switch to hardware trigger source.
-
-}
 
 void setup_pio_TIOA0 ()  // Configure Ard pin 2 as output from TC0 channel A (copy of trigger event)
 {
@@ -392,17 +355,11 @@ class RingBufferSized
 
 
 
-// Circular buffer, power of two.
-//#define BUFSIZE 0x400
-//#define BUFMASK 0x3FF
-
 const int kMaxCommandLenBytes = 64;
 
-//const int kBufferSizeBytes = 32768;
 const int kADCChannels = 2; //must be power of 2 (for now)
 const int kBytesPerSample = sizeof(int16_t);
 
-//const int kBufferPoints = kBufferSizeBytes/kADCChannels;
 const int kLog2BufferPoints = 12;
 const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
 
@@ -417,12 +374,6 @@ typedef RingBufferSized<int16_t, kLog2BufferPoints> TRingBuf;
 
 TRingBuf gSampleBuffers[kADCChannels];
 
-
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
 
 volatile int32_t gFirstADCPointus = 0;
 
@@ -456,11 +407,6 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
      }
   }
 }
-
-#ifdef __cplusplus
-}
-#endif
-
 
 
 
@@ -616,9 +562,13 @@ if(gState == kIdle)
 
 if(gState == kHadFirstSample)
    {
+   Serial.write('\n'); //Readability while testing only!
+
    FirstSampleTimePacket ftPacket(gFirstADCPointus);
    ftPacket.write(Serial);
    gState = kSampling;
+   
+   Serial.write('\n'); //Readability while testing only!
    }
 
 //Find the number of samples in the ringbuffer with the least samples
@@ -645,8 +595,7 @@ if(points >= kPointsPerPacket)
    
    packet.write(Serial);
 
-   //Testing
-   Serial.write('\n');
+   Serial.write('\n'); //Readability while testing only!
    }
 
 }
