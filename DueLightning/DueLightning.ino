@@ -33,80 +33,6 @@ TC7	TC2	1	3, 10
 TC8	TC2	2	11, 12
 */
 
-
-const int ADC_FREQ = 10;
-
-inline uint32_t saveIRQState(void)
-{
-  uint32_t pmask = __get_PRIMASK() & 1;
-  __set_PRIMASK(1);
-  return pmask;
-}
-
-
-inline void restoreIRQState(uint32_t pmask)
-{
-__set_PRIMASK(pmask);
-}
-
-
-
-void setup()
-{
-  Serial.begin (115200) ; // was for debugging
-  adc_setup () ;         // setup ADC
- 
-  pmc_enable_periph_clk (TC_INTERFACE_ID + 0*3+0) ;  // clock the TC0 channel 0
-
-  TcChannel * t = &(TC0->TC_CHANNEL)[0] ;    // pointer to TC0 registers for its channel 0
-  t->TC_CCR = TC_CCR_CLKDIS ;  // disable internal clocking while setup regs
-  t->TC_IDR = 0xFFFFFFFF ;     // disable interrupts
-  t->TC_SR ;                   // read int status reg to clear pending
-  t->TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK1 |   // use TCLK1 (prescale by 2, = 42MHz)
-              TC_CMR_WAVE |                  // waveform mode
-              TC_CMR_WAVSEL_UP_RC |          // count-up PWM using RC as threshold
-              TC_CMR_EEVT_XC0 |     // Set external events from XC0 (this setup TIOB as output)
-              TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR |
-              TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR ;
- 
- // t->TC_RC =  875 ;     // counter resets on RC, so sets period in terms of 42MHz clock
- // t->TC_RA =  440 ;     // roughly square wave
-  t->TC_RC =  VARIANT_MCK/2/ADC_FREQ;     // counter resets on RC, so sets period in terms of 42MHz clock
-  t->TC_RA =  VARIANT_MCK/2/ADC_FREQ/2 ;     // roughly square wave
-
-  t->TC_CMR = (t->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET ;  // set clear and set from RA and RC compares
- 
-  t->TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG ;  // re-enable local clocking and switch to hardware trigger source.
-
-  setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
-  dac_setup () ;        // setup up DAC auto-triggered at 48kHz
-
-  enableMicroSecClock();
-}
-
-volatile boolean pinState;
-volatile int32_t gMilliSec;
-
-void TC3_Handler()
-{
-++gMilliSec;
-TC_GetStatus(TC1, 0);
-digitalWrite(12, pinState = !pinState);
-}
-
-void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) {
-pmc_set_writeprotect(false);
-pmc_enable_periph_clk((uint32_t)irq);
-TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK1); // TC_CMR_TCCLKS_TIMER_CLOCK4);
-uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
-TC_SetRA(tc, channel, rc/2); //50% high, 50% low
-TC_SetRC(tc, channel, rc);
-TC_Start(tc, channel);
-tc->TC_CHANNEL[channel].TC_IER=TC_IER_CPCS;
-tc->TC_CHANNEL[channel].TC_IDR=~TC_IER_CPCS;
-NVIC_EnableIRQ(irq);
-}
-
 /**
  * \brief Set RC on the selected channel.
  *
@@ -121,6 +47,99 @@ uint32_t TC_GetRC(Tc *tc, uint32_t chan) {
 uint32_t TC_GetCV(Tc *tc, uint32_t chan) {
 	return tc->TC_CHANNEL[chan].TC_CV;
 }
+
+
+void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) 
+{
+pmc_set_writeprotect(false);
+pmc_enable_periph_clk((uint32_t)irq);
+TC_Configure(tc, channel, TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC | TC_CMR_TCCLKS_TIMER_CLOCK1); // TC_CMR_TCCLKS_TIMER_CLOCK4);
+uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
+TC_SetRA(tc, channel, rc/2); //50% high, 50% low
+TC_SetRC(tc, channel, rc);
+TC_Start(tc, channel);
+tc->TC_CHANNEL[channel].TC_IER=TC_IER_CPCS;
+tc->TC_CHANNEL[channel].TC_IDR=~TC_IER_CPCS;
+NVIC_EnableIRQ(irq);
+}
+
+const int kADCPointsPerSec = 10;
+
+inline uint32_t saveIRQState(void)
+{
+  uint32_t pmask = __get_PRIMASK() & 1;
+  __set_PRIMASK(1);
+  return pmask;
+}
+
+
+inline void restoreIRQState(uint32_t pmask)
+{
+__set_PRIMASK(pmask);
+}
+
+enum State
+{
+kIdle,
+kStartingSampling,
+kHadFirstSample,
+kSampling,  
+};
+
+volatile State gState = kIdle;
+
+
+void setup()
+{
+  Serial.begin (115200) ; // was for debugging
+  adc_setup () ;         // setup ADC
+ 
+ //Timer, channel, IRQ, Frequency
+//startTimer(TC0, 0, TC0_IRQn, kADCPointsPerSec);
+
+
+
+  pmc_enable_periph_clk (TC_INTERFACE_ID + 0*3+0);  // clock the TC0 channel 0
+
+  TcChannel * t = &(TC0->TC_CHANNEL)[0] ;    // pointer to TC0 registers for its channel 0
+  t->TC_CCR = TC_CCR_CLKDIS ;  // disable internal clocking while setup regs
+  t->TC_IDR = 0xFFFFFFFF ;     // disable interrupts
+  t->TC_SR ;                   // read int status reg to clear pending
+  t->TC_CMR = TC_CMR_TCCLKS_TIMER_CLOCK1 |   // use TCLK1 (prescale by 2, = 42MHz)
+              TC_CMR_WAVE |                  // waveform mode
+              TC_CMR_WAVSEL_UP_RC |          // count-up PWM using RC as threshold
+              TC_CMR_EEVT_XC0 |     // Set external events from XC0 (this setup TIOB as output)
+              TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR |
+              TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR ;
+ 
+ // t->TC_RC =  875 ;     // counter resets on RC, so sets period in terms of 42MHz clock
+ // t->TC_RA =  440 ;     // roughly square wave
+  t->TC_RC =  VARIANT_MCK/2/kADCPointsPerSec;     // counter resets on RC, so sets period in terms of 42MHz clock
+  t->TC_RA =  VARIANT_MCK/2/kADCPointsPerSec/2 ;     // roughly square wave
+
+  t->TC_CMR = (t->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET ;  // set clear and set from RA and RC compares
+ 
+  t->TC_CCR = TC_CCR_CLKEN | TC_CCR_SWTRG ;  // re-enable local clocking and switch to hardware trigger source.
+
+
+  setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
+  dac_setup () ;        // setup up DAC auto-triggered at 48kHz
+
+ // enableMicroSecClock();
+}
+
+volatile boolean pinState;
+volatile int32_t gMilliSec;
+
+void TC3_Handler()
+{
+++gMilliSec;
+TC_GetStatus(TC1, 0);
+digitalWrite(12, pinState = !pinState);
+}
+
+
+
 
 
 //const int32_t kMilliSecRC = 84000000/2/1000; //42000
@@ -377,23 +396,27 @@ class RingBufferSized
 //#define BUFSIZE 0x400
 //#define BUFMASK 0x3FF
 
-const int kBufferSizeBytes = 32768;
+const int kMaxCommandLenBytes = 64;
+
+//const int kBufferSizeBytes = 32768;
 const int kADCChannels = 2; //must be power of 2 (for now)
-const int kBufferPoints = kBufferSizeBytes/kADCChannels;
+const int kBytesPerSample = sizeof(int16_t);
+
+//const int kBufferPoints = kBufferSizeBytes/kADCChannels;
+const int kLog2BufferPoints = 12;
+const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
+
+const int kPointsPerPacket = 1;
 
 const int kLog2BufferSizeBytes = 15;
 const int kLog2ADCChannels = 1;
 const int kLog2BytesPerSample = 1;
 
 
-typedef RingBufferSized<int16_t, 10> TRingBuf;
+typedef RingBufferSized<int16_t, kLog2BufferPoints> TRingBuf;
 
-//volatile int gSampleBuffers[kBufferPoints][kADCChannels] ;
 TRingBuf gSampleBuffers[kADCChannels];
 
-//volatile int sptr = 0 ;
-volatile int isr_count = 0 ;   // this was for debugging
-volatile int lastIsr = 0 ;   // this was for debugging
 
 
 #ifdef __cplusplus
@@ -401,27 +424,37 @@ extern "C"
 {
 #endif
 
+volatile int32_t gFirstADCPointus = 0;
+
 void ADC_Handler (void)
 {
+if(gState == kStartingSampling)
+   {
+   gFirstADCPointus = micros();
+   gState = kHadFirstSample;
+   }
+
 if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+6);    // get conversion result
-  gSampleBuffers[0].Push(val);           // stick in circular buffer
-  //sptr = (sptr+1) & BUFMASK;      // move pointer
-  //dac_write (0xFFF & ~val);       // copy inverted to DAC output FIFO
-  Serial.print(val,HEX);
+  if(gState == kSampling)
+    {
+    gSampleBuffers[0].Push(val);           // stick in circular buffer
+    //Serial.print(val,HEX);
+    }
   }
 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+7) ;    // get conversion result
-  gSampleBuffers[1].Push(val);           // stick in circular buffer
-  //sptr = (sptr+1) & BUFMASK ;      // move pointer
-  dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
-  Serial.print("\t");
-  Serial.println(val,HEX);
+  if(gState == kSampling)
+     {
+     gSampleBuffers[1].Push(val);           // stick in circular buffer
+     dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+     //Serial.print("\t");
+     //Serial.println(val,HEX);
+     }
   }
-isr_count ++ ;
 }
 
 #ifdef __cplusplus
@@ -429,83 +462,191 @@ isr_count ++ ;
 #endif
 
 
-int32_t microsFixed()
+
+
+void StartSampling()
 {
-int32_t ticks2;
-int32_t millis2;
-uint32_t ticks1 = TC_GetCV(TC1, 0);
-int32_t millis1 = gMilliSec;
-
-do
-  {
-  ticks2 = TC_GetCV(TC1, 0);
-  millis2 = gMilliSec;
-  } 
-while (millis1 != millis2 || ticks1 > ticks2);
-
-return millis2*1000 + (1000*ticks2)/kMilliSecRC;
+gState = kStartingSampling;
 }
 
-int32_t microsNoInt()
+void StopSampling()
 {
-uint32_t state = saveIRQState(); //Disable interrupts
-uint32_t ticks1 = TC_GetCV(TC1, 0);
-int32_t millis = gMilliSec;
-uint32_t ticks2 = TC_GetCV(TC1, 0);
-restoreIRQState(state);   //Enable interrupts
-if(ticks1 > ticks2)
-  ++millis; //HW counter wrapped
+gState = kIdle;
 
-return millis*1000 + (1000*ticks2)/kMilliSecRC;
+for(int chan(0); chan<kADCChannels;++chan)
+   {
+   auto buffer = gSampleBuffers[chan];
+   buffer.Clear();
+   }
 }
 
-
-// Interrupt-compatible version of micros
-// Theory: repeatedly take readings of SysTick counter, millis counter and SysTick interrupt pending flag.
-// When it appears that millis counter and pending is stable and SysTick hasn't rolled over, use these 
-// values to calculate micros. If there is a pending SysTick, add one to the millis counter in the calculation.
-uint32_t micros2( void )
+class Packet
 {
-    uint32_t ticks, ticks2;
-    uint32_t pend, pend2;
-    uint32_t count, count2;
+   //The header is 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
+   //3rd byte is the packet time (0x04) for data packets.
+   //The head and packet type is followed by a 1 byte packet count number,
+   //making a total of 4 bytes before the payload daya that need to match the 
+   //expected pattern(s) before the client can detect a packet.
+   const char sHeaderAndPacketType[3] = {'P',0xA0,'D'}; //D for data
 
-    ticks2  = SysTick->VAL;
-    //pend2   = !!((SCB->ICSR & SCB_ICSR_PENDSTSET_Msk)||((SCB->SHCSR & SCB_SHCSR_SYSTICKACT_Msk)))  ;
-    count2  = GetTickCount();
+public:
+   Packet() : mPoint(0)
+      {
+      }
 
-    do {
-        ticks=ticks2;
-        //pend=pend2;
-        count=count2;
-        ticks2  = SysTick->VAL;
-        //pend2   = !!((SCB->ICSR & SCB_ICSR_PENDSTSET_Msk)||((SCB->SHCSR & SCB_SHCSR_SYSTICKACT_Msk)))  ;
-        count2  = GetTickCount();
-    } while ((count != count2) || (ticks < ticks2));
+   bool addSample(int chan, int16_t sample)
+      {
+      if(mPoint >= kPointsPerPacket)
+         return false;
+      mData[mPoint++][chan] = sample;
+      return true;
+      }
 
-    return count * 1000 + (1000*(SysTick->LOAD + 1 - ticks))/ SysTick->LOAD ; 
-    // this is an optimization to turn a runtime division into two compile-time divisions and 
-    // a runtime multiplication and shift, saving a few cycles
-}
+   //returns number of bytes written
+   int write(Stream &stream) const
+      {
+      int n = stream.write(sHeaderAndPacketType, 3);
+      n += stream.write(sPacketCount++);
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      return n;
+      }
 
 
-int lastMicro; 
+protected:
 
-int printCount;
+   static uint8_t sPacketCount;  
+
+   int mPoint;
+   uint16_t mData[kPointsPerPacket][kADCChannels];
+
+};
+
+uint8_t Packet::sPacketCount = 0;   
+
+
+class TimePacket : protected Packet
+{
+   const char sHeaderAndPacketType[3] = {'P',0xA0,'N'}; //'N' for now
+
+public:
+   TimePacket(int32_t tick32us, uint8_t timeRequestNumber) :
+      mTimeRequestNumber(timeRequestNumber)
+      {
+      mData[0] = tick32us;
+      }
+
+      //returns number of bytes written
+   int write(Stream &stream) const
+      {
+      int n = stream.write(sHeaderAndPacketType, 3);
+      n += stream.write(sPacketCount++);
+      n += stream.write(mTimeRequestNumber);
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      return n;
+      }
+
+protected:
+
+   int32_t mData[1];
+   uint8_t mTimeRequestNumber;
+};
+
+class FirstSampleTimePacket : protected Packet
+{
+   const char sHeaderAndPacketType[3] = {'P',0xA0,'F'}; //'F' for First sample time
+
+public:
+   FirstSampleTimePacket(int32_t tick32us)
+      {
+      mData[0] = tick32us;
+      }
+
+      //returns number of bytes written
+   int write(Stream &stream) const
+      {
+      int n = stream.write(sHeaderAndPacketType, 3);
+      n += stream.write(sPacketCount++);
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      return n;
+      }
+
+protected:
+
+   int32_t mData[1];
+};
+
+
 
 void loop()
 {
-  if (isr_count-lastIsr >= 100000)
-    {
-    lastIsr = isr_count;
-    int now = micros();
-    //Serial.println(String(printCount) + "  delay  "+ String(now- lastMicro));
-    ++printCount;
 
-    // int printEnd = microsNoInt();
-    // Serial.println(" print took: "+ String(printEnd - now));
+int rxAvail = Serial.available();
+if(rxAvail)
+   {
+   char cmdBuf[kMaxCommandLenBytes];
+   int bytesRead = Serial.readBytesUntil('\n', cmdBuf, kMaxCommandLenBytes);
+   auto cmd = cmdBuf[0];
+   switch (cmd)
+         {
+      case 'b':   //begin sampling
+         StartSampling();
+         break;
+      case 's':   //stop sampling
+         StopSampling();
+         break;
+      case 'n':   //return micro second time now
+         {
+         int32_t now = micros();
+         auto timeRequestNumber = cmdBuf[1];
+         TimePacket timePacket(now, timeRequestNumber);
+         timePacket.write(Serial);
+         break;   
+         }
+      case 'v':   //version info
+         Serial.write("Lightning Arduino Example V0.9.0 $$$");
+         break;
+      default:
+         break;
+      }
 
-    lastMicro = now; 
-    }
+   }
+
+if(gState == kIdle)
+   return;
+
+if(gState == kHadFirstSample)
+   {
+   FirstSampleTimePacket ftPacket(gFirstADCPointus);
+   ftPacket.write(Serial);
+   gState = kSampling;
+   }
+
+//Find the number of samples in the ringbuffer with the least samples
+int points = gSampleBuffers[0].GetCount();
+for(int chan(1); chan<kADCChannels;++chan)
+   {
+   auto &buffer = gSampleBuffers[chan];
+   points = min(buffer.GetCount(), points);
+   }
+
+
+if(points >= kPointsPerPacket)
+   {
+   Packet packet;
+
+   for(int pt(0);pt<kPointsPerPacket;++pt)
+      {
+      for(int chan(0); chan<kADCChannels;++chan)
+         {
+         auto &buffer = gSampleBuffers[chan];
+         packet.addSample(chan, buffer.GetNext());
+         }   
+      }
+   
+   packet.write(Serial);
+
+   //Testing
+   Serial.write('\n');
+   }
 
 }
