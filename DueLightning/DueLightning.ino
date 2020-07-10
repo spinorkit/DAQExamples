@@ -33,6 +33,8 @@ TC7	TC2	1	3, 10
 TC8	TC2	2	11, 12
 */
 
+#define Serial SerialUSB
+
 /**
  * \brief Set RC on the selected channel.
  *
