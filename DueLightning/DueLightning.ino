@@ -71,22 +71,26 @@ pmc_enable_periph_clk((uint32_t)irq);
 
 TC_Stop(tc, channel);
 
-uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
-TC_SetRA(tc, channel, rc/2); //50% high, 50% low
-TC_SetRC(tc, channel, rc);
+TcChannel *tcChan = tc->TC_CHANNEL + channel;
 
 TC_Configure(tc, channel, 
    TC_CMR_TCCLKS_TIMER_CLOCK1 |           // use TCLK1 (prescale by 2, = 42MHz)
    TC_CMR_WAVE |                          // waveform mode
    TC_CMR_WAVSEL_UP_RC |                  // count-up PWM using RC as threshold
    TC_CMR_EEVT_XC0 |                      // Set external events from XC0 (this setup TIOB as output)
-   TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR | TC_CMR_ACPC_SET
+   TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR
    ); 
+
+uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
+TC_SetRC(tc, channel, rc);
+TC_SetRA(tc, channel, rc/2); //50% high, 50% low
+
+tcChan->TC_CMR = (tcChan->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET ;  // set clear and set from RA and RC compares
 
 TC_Start(tc, channel);
 }
 
-const int kADCPointsPerSec = 10;
+const int kADCPointsPerSec = 250;
 
 inline uint32_t saveIRQState(void)
 {
@@ -110,11 +114,24 @@ kSampling,
 };
 
 volatile State gState = kIdle;
+volatile bool gFirstSampleTimeRequested = false;
+
+void debugNewLine()
+{
+//Serial.write('\n'); //Readability while testing only!
+}
 
 
 void setup()
 {
-Serial.begin (115200) ; // was for debugging
+Serial.begin (115200);
+#ifdef ENABLE_SERIAL_DEBUGGING 
+SerialUSB.begin(0);  //debugging
+#endif
+
+pinMode(8, OUTPUT);
+pinMode(12, OUTPUT);
+
 adc_setup () ;         // setup ADC
 
 //Timer, channel, IRQ, Frequency
@@ -122,6 +139,10 @@ startADCTimer(TC0, 0, TC0_IRQn, kADCPointsPerSec);
 
 setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
 dac_setup () ;        // setup up DAC auto-triggered at 48kHz
+
+#ifdef ENABLE_SERIAL_DEBUGGING
+SerialUSB.println("Arduino setup complete");
+#endif
 }
 
 
@@ -212,6 +233,7 @@ Transfer Period = (TRANSFER * 2 + 3) ADCClock periods.
 
   NVIC_EnableIRQ (ADC_IRQn) ;   // enable ADC interrupt vector
   ADC->ADC_IDR = 0xFFFFFFFF ;   // disable interrupts
+  //ADC->ADC_IER = 0x80 ;         // enable AD7 End-Of-Conv interrupt (Arduino pin A0)
   ADC->ADC_IER = 0x80 ;         // enable AD7 End-Of-Conv interrupt (Arduino pin A0)
   ADC->ADC_CHDR = 0xFFFF ;      // disable all channels
   //ADC->ADC_CHER = 0x80 ;        // enable just A0
@@ -378,6 +400,8 @@ if(gState == kStartingSampling)
 if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+6);    // get conversion result
+  digitalWrite(8, HIGH);
+
   if(gState == kSampling)
     {
     gSampleBuffers[0].Push(val);           // stick in circular buffer
@@ -388,6 +412,8 @@ if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+7) ;    // get conversion result
+  digitalWrite(12, HIGH);
+
   if(gState == kSampling)
      {
      gSampleBuffers[1].Push(val);           // stick in circular buffer
@@ -396,25 +422,9 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
      //Serial.println(val,HEX);
      }
   }
-}
 
-
-
-void StartSampling()
-{
-//TODO: restart the ADC timer here
-gState = kStartingSampling;
-}
-
-void StopSampling()
-{
-gState = kIdle;
-
-for(int chan(0); chan<kADCChannels;++chan)
-   {
-   auto buffer = gSampleBuffers[chan];
-   buffer.Clear();
-   }
+digitalWrite(8, LOW);
+digitalWrite(12, LOW);
 }
 
 class Packet
@@ -427,6 +437,12 @@ class Packet
    const char sHeaderAndPacketType[3] = {'P',0xA0,'D'}; //D for data
 
 public:
+
+   static void ResetPacketCount()
+      {
+      sPacketCount = 0;   
+      }
+
    Packet() : mPoint(0)
       {
       }
@@ -435,8 +451,13 @@ public:
       {
       if(mPoint >= kPointsPerPacket)
          return false;
-      mData[mPoint++][chan] = sample;
+      mData[mPoint][chan] = (sample << 4) - 0x8000;
       return true;
+      }
+
+   void nextPoint()
+      {
+      ++mPoint;   
       }
 
    //returns number of bytes written
@@ -454,7 +475,7 @@ protected:
    static uint8_t sPacketCount;  
 
    int mPoint;
-   uint16_t mData[kPointsPerPacket][kADCChannels];
+   int16_t mData[kPointsPerPacket][kADCChannels];
 
 };
 
@@ -513,15 +534,58 @@ protected:
 };
 
 
+void StartSampling()
+{
+//TODO: restart the ADC timer here
+Packet::ResetPacketCount();
+gState = kStartingSampling;
+}
+
+void StopSampling()
+{
+gState = kIdle;
+gFirstSampleTimeRequested = false;
+
+for(int chan(0); chan<kADCChannels;++chan)
+   {
+   auto buffer = gSampleBuffers[chan];
+   buffer.Clear();
+   }
+}
+
+
+void sendFirstSampleTimeIfNeeded()
+{
+if(!gFirstSampleTimeRequested)
+   return;
+
+gFirstSampleTimeRequested = false;
+debugNewLine();   //Readability while testing only!
+
+FirstSampleTimePacket ftPacket(gFirstADCPointus);
+ftPacket.write(Serial);
+
+debugNewLine();   //Readability while testing only!
+}
+
+
 
 void loop()
 {
 
-int rxAvail = Serial.available();
-if(rxAvail)
+//int rxAvail = Serial.available();
+int hasRx = Serial.peek();
+
+if(hasRx >= 0)
    {
    char cmdBuf[kMaxCommandLenBytes];
    int bytesRead = Serial.readBytesUntil('\n', cmdBuf, kMaxCommandLenBytes);
+   #ifdef ENABLE_SERIAL_DEBUGGING
+   SerialUSB.println("bytesRead="+String(bytesRead));
+   SerialUSB.println(cmdBuf[0], HEX);
+   SerialUSB.println(cmdBuf[1], HEX);
+   SerialUSB.println();
+   #endif
    auto cmd = cmdBuf[0];
    switch (cmd)
       {
@@ -529,21 +593,10 @@ if(rxAvail)
          StartSampling();
          break;
       case 'f':   //first sample time
-         {
-         //Wait for up to 500 ms for first sample to arrive
-         for(int ms(0);gState < kSampling && ms < 500; ++ms)
-            delay(1);
-         if(gState < kSampling)
-            break;   
-         Serial.write('\n'); //Readability while testing only!
-
-         FirstSampleTimePacket ftPacket(gFirstADCPointus);
-         ftPacket.write(Serial);
-         gState = kSampling;
-
-         Serial.write('\n'); //Readability while testing only!
+         gFirstSampleTimeRequested = true;
+         if(gState == kSampling)
+            sendFirstSampleTimeIfNeeded();
          break;
-         }
       case 's':   //stop sampling
          StopSampling();
          break;
@@ -557,6 +610,9 @@ if(rxAvail)
          }
       case 'v':   //version info
          Serial.write("ArduinoRT Example V0.9.0 $$$");
+         #ifdef ENABLE_SERIAL_DEBUGGING
+         SerialUSB.println("Sent version info");
+         #endif
          break;
       default:
          break;
@@ -570,11 +626,7 @@ if(gState == kIdle)
 if(gState == kHadFirstSample)
    {
    gState = kSampling;
-
-   // Serial.write('\n'); //Readability while testing only!
-   // FirstSampleTimePacket ftPacket(gFirstADCPointus);
-   // ftPacket.write(Serial);
-   // Serial.write('\n'); //Readability while testing only!
+   sendFirstSampleTimeIfNeeded();
    }
 
 //Find the number of samples in the ringbuffer with the least samples
@@ -586,7 +638,7 @@ for(int chan(1); chan<kADCChannels;++chan)
    }
 
 
-if(points >= kPointsPerPacket)
+while(points >= kPointsPerPacket)
    {
    Packet packet;
 
@@ -596,12 +648,15 @@ if(points >= kPointsPerPacket)
          {
          auto &buffer = gSampleBuffers[chan];
          packet.addSample(chan, buffer.GetNext());
-         }   
+         }
+      packet.nextPoint();   
       }
    
    packet.write(Serial);
 
-   Serial.write('\n'); //Readability while testing only!
+   --points;
+
+   debugNewLine();   //Readability while testing only!
    }
 
 }
