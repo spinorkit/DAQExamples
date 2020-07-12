@@ -1,0 +1,7 @@
+{
+    "board": "adafruit:samd:adafruit_feather_m0_express",
+    "configuration": "usbstack=arduino,debug=off",
+    "sketch": "SAMDLightning.ino",
+    "output": "../~~SAMDLightningBuild",
+    "port": "COM16"
+}
