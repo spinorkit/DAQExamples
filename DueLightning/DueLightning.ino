@@ -92,7 +92,7 @@ tcChan->TC_CMR = (tcChan->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC
 TC_Start(tc, channel);
 }
 
-const int kADCPointsPerSec = 250;
+const int kADCPointsPerSec = 4000;
 
 inline uint32_t saveIRQState(void)
 {
