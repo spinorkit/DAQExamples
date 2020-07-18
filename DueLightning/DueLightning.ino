@@ -92,7 +92,7 @@ tcChan->TC_CMR = (tcChan->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC
 TC_Start(tc, channel);
 }
 
-const int kADCPointsPerSec = 250;
+const int kADCPointsPerSec = 4000;
 
 inline uint32_t saveIRQState(void)
 {
@@ -130,6 +130,8 @@ Serial.begin (115200);
 #ifdef ENABLE_SERIAL_DEBUGGING 
 SerialUSB.begin(0);  //debugging
 #endif
+
+pinMode(2, OUTPUT);
 
 pinMode(8, OUTPUT);
 pinMode(12, OUTPUT);
@@ -374,7 +376,7 @@ const int kMaxCommandLenBytes = 64;
 const int kADCChannels = 2; //must be power of 2 (for now)
 const int kBytesPerSample = sizeof(int16_t);
 
-const int kLog2BufferPoints = 12;
+const int kLog2BufferPoints = 13;
 const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
 
 const int kPointsPerPacket = 1;
@@ -406,7 +408,9 @@ if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and 
 
   if(gState == kSampling)
     {
-    gSampleBuffers[0].Push(val);           // stick in circular buffer
+    if(!gSampleBuffers[0].Push(val))           // stick in circular buffer
+      digitalWrite(12, HIGH); //Buffer overflow!!
+
     //Serial.print(val,HEX);
     }
   }
@@ -414,7 +418,7 @@ if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
   int val = *(ADC->ADC_CDR+7) ;    // get conversion result
-  digitalWrite(12, HIGH);
+  //digitalWrite(12, HIGH);
 
   if(gState == kSampling)
      {
@@ -426,7 +430,7 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
   }
 
 digitalWrite(8, LOW);
-digitalWrite(12, LOW);
+//digitalWrite(12, LOW);
 }
 
 class Packet
@@ -539,6 +543,13 @@ protected:
 void StartSampling()
 {
 //TODO: restart the ADC timer here
+for(int chan(0); chan<kADCChannels;++chan)
+   {
+   auto &buffer = gSampleBuffers[chan];
+   buffer.Clear();
+   }
+
+digitalWrite(12, LOW); //Clear Buffer overflow
 Packet::ResetPacketCount();
 gState = kStartingSampling;
 }
@@ -654,11 +665,13 @@ while(points >= kPointsPerPacket)
       packet.nextPoint();   
       }
    
+   digitalWrite(2, HIGH);
    packet.write(Serial);
+   digitalWrite(2, LOW);
 
    --points;
 
-   debugNewLine();   //Readability while testing only!
+   //debugNewLine();   //Readability while testing only!
    }
 
 }
