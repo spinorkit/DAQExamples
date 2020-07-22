@@ -92,7 +92,12 @@ tcChan->TC_CMR = (tcChan->TC_CMR & 0xFFF0FFFF) | TC_CMR_ACPA_CLEAR | TC_CMR_ACPC
 TC_Start(tc, channel);
 }
 
-const int kADCPointsPerSec = 4000;
+const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) per packet
+int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
+
+const int kNSampleRates = 6;
+//const int kSampleRates[] = {100, 250, 400, 1000, 2000, 4000};
+const int kSampleRates[] = {4000, 2000, 1000, 400, 250, 100};
 
 inline uint32_t saveIRQState(void)
 {
@@ -127,11 +132,16 @@ void debugNewLine()
 void setup()
 {
 Serial.begin (115200);
+while(!Serial);
+
 #ifdef ENABLE_SERIAL_DEBUGGING 
 SerialUSB.begin(0);  //debugging
 #endif
 
-pinMode(2, OUTPUT);
+pinMode(5, OUTPUT);
+digitalWrite(5, LOW);
+
+pinMode(7, OUTPUT);
 
 pinMode(8, OUTPUT);
 pinMode(12, OUTPUT);
@@ -139,7 +149,7 @@ pinMode(12, OUTPUT);
 adc_setup () ;         // setup ADC
 
 //Timer, channel, IRQ, Frequency
-startADCTimer(TC0, 0, TC0_IRQn, kADCPointsPerSec);
+startADCTimer(TC0, 0, TC0_IRQn, gADCPointsPerSec);
 
 setup_pio_TIOA0 () ;  // drive Arduino pin 2 at 48kHz to bring clock out
 dac_setup () ;        // setup up DAC auto-triggered at 48kHz
@@ -401,35 +411,31 @@ if(gState == kStartingSampling)
    gState = kHadFirstSample;
    }
 
+int val0 = 0;
+int val1 = 0;
 if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
-  int val = *(ADC->ADC_CDR+6);    // get conversion result
-  digitalWrite(8, HIGH);
-
-  if(gState == kSampling)
-    {
-    if(!gSampleBuffers[0].Push(val))           // stick in circular buffer
-      digitalWrite(12, HIGH); //Buffer overflow!!
-
-    //Serial.print(val,HEX);
-    }
+  val1 = *(ADC->ADC_CDR+6);    // get conversion result
+  //digitalWrite(8, HIGH);
   }
 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
   {
-  int val = *(ADC->ADC_CDR+7) ;    // get conversion result
+  val0 = *(ADC->ADC_CDR+7) ;    // get conversion result
   //digitalWrite(12, HIGH);
 
   if(gState == kSampling)
      {
-     gSampleBuffers[1].Push(val);           // stick in circular buffer
-     dac_write (0xFFF & ~val) ;       // copy inverted to DAC output FIFO
+    //val = 2048; //send a hard 0 in 2nd channel for testing only !!
+     gSampleBuffers[0].Push(val0);           // stick in circular buffer for A0
+     gSampleBuffers[1].Push(val1);           // stick in circular buffer for A1
+     dac_write (0xFFF & ~val0) ;       // copy inverted to DAC output FIFO
      //Serial.print("\t");
      //Serial.println(val,HEX);
      }
   }
 
-digitalWrite(8, LOW);
+//digitalWrite(8, LOW);
 //digitalWrite(12, LOW);
 }
 
@@ -457,7 +463,12 @@ public:
       {
       if(mPoint >= kPointsPerPacket)
          return false;
+//Testing!!
+//if(chan == 0)
+//   mData[mPoint][chan] = 0;
+//else
       mData[mPoint][chan] = (sample << 4) - 0x8000;
+
       return true;
       }
 
@@ -542,7 +553,11 @@ protected:
 
 void StartSampling()
 {
+digitalWrite(5, LOW);
+
 //TODO: restart the ADC timer here
+startADCTimer(TC0, 0, TC0_IRQn, gADCPointsPerSec);
+
 for(int chan(0); chan<kADCChannels;++chan)
    {
    auto &buffer = gSampleBuffers[chan];
@@ -550,7 +565,7 @@ for(int chan(0); chan<kADCChannels;++chan)
    }
 
 digitalWrite(12, LOW); //Clear Buffer overflow
-Packet::ResetPacketCount();
+//Packet::ResetPacketCount();
 gState = kStartingSampling;
 }
 
@@ -622,11 +637,22 @@ if(hasRx >= 0)
          break;   
          }
       case 'v':   //version info
+         digitalWrite(5, HIGH);
          Serial.write("ArduinoRT Example V0.9.0 $$$");
+         Packet::ResetPacketCount(); //new session
+
          #ifdef ENABLE_SERIAL_DEBUGGING
          SerialUSB.println("Sent version info");
          #endif
          break;
+      case '~': //sample rate
+         {
+         auto rateChar = cmdBuf[1]; //'0123456'
+         unsigned int index = rateChar - '0';
+         if(index < sizeof(kSampleRates)/sizeof(int))
+            gADCPointsPerSec = kSampleRates[index];
+         break;
+         }
       default:
          break;
       }
@@ -665,9 +691,9 @@ while(points >= kPointsPerPacket)
       packet.nextPoint();   
       }
    
-   digitalWrite(2, HIGH);
+   digitalWrite(7, HIGH);
    packet.write(Serial);
-   digitalWrite(2, LOW);
+   digitalWrite(7, LOW);
 
    --points;
 
