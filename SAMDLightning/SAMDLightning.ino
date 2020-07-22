@@ -35,14 +35,62 @@ FOR SAMD51:
 #define TIMER5_OUT1 SCK
 #endif
 
-const int kADCPointsPerSec = 1000;
+const int kADCPointsPerSec = 4;
+
+inline void syncADC() 
+{
+  while (ADC->STATUS.bit.SYNCBUSY);
+}
+
+volatile bool gADCstate = false;
+
 
 void setup() {
 
+pinMode(6, OUTPUT);
    pinMode(LED_BUILTIN, OUTPUT);
 
+//Setup event system so TC4 triggers ADC conversion start
+PM->APBCMASK.reg |= PM_APBCMASK_EVSYS;                                  // Switch on the event system peripheral
 
-  /********************* Timer #5, 16 bit, one PWM out, period = 1000 */
+while(GCLK->STATUS.reg & GCLK_STATUS_SYNCBUSY);
+GCLK->CLKCTRL.reg = GCLK_CLKCTRL_CLKEN |        // Enable the generic clock...
+                      GCLK_CLKCTRL_GEN_GCLK0 |    // On GCLK0 at 48MHz
+                      GCLK_CLKCTRL_ID( GCM_EVSYS_CHANNEL_0 );    // Route GCLK0 to EVENT channle
+
+while (GCLK->STATUS.bit.SYNCBUSY);              // Wait for synchronization
+
+
+EVSYS->USER.reg = EVSYS_USER_CHANNEL(1) |                               // Attach the event user (receiver) to channel 0 (n + 1)
+                  EVSYS_USER_USER(EVSYS_ID_USER_ADC_START);             // Set the event user (receiver) as ADC START
+
+EVSYS->CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |               // No event edge detection
+                     EVSYS_CHANNEL_PATH_ASYNCHRONOUS |                  // Set event path as asynchronous
+                     EVSYS_CHANNEL_EVGEN(EVSYS_ID_GEN_TC4_MCX_0) |      // Set event generator (sender) as TC4 Match/Capture 0
+                     EVSYS_CHANNEL_CHANNEL(0);                          // Attach the generator (sender) to channel 0                                 
+
+//Setup ADC
+
+analogReadResolution(12);
+analogReference(AR_DEFAULT);
+
+pinPeripheral(A2, PIO_ANALOG);
+
+//PM->APBCMASK.reg |= PM_APBCMASK_ADC; already done by wiring.c
+
+//ADC->INPUTCTRL.reg
+ADC->EVCTRL.reg = ADC_EVCTRL_STARTEI; //Start on event
+
+ADC->INTENSET.reg = ADC_INTENSET_RESRDY; //Enable interrupt on result ready
+
+syncADC();
+ADC->CTRLA.bit.ENABLE = 0x01;             // Enable ADC
+syncADC();
+
+NVIC_EnableIRQ(ADC_IRQn);
+
+
+  /********************* Timer #4 + #5, 32 bit, one PWM out */
   adcTimer.configure(TC_CLOCK_PRESCALER_DIV1, // prescaler
                 TC_COUNTER_SIZE_32BIT,   // bit width of timer/counter
                 TC_WAVE_GENERATION_MATCH_FREQ // frequency or PWM mode
@@ -52,6 +100,10 @@ void setup() {
   if (! adcTimer.PWMout(true, 0, A1)) {
     Serial.println("Failed to configure PWM output");
   }
+
+TC4->COUNT32.EVCTRL.reg |= TC_EVCTRL_MCEO0;
+while (TC4->COUNT32.STATUS.bit.SYNCBUSY);                // Wait for synchronization
+
   adcTimer.enable(true);
 
 
@@ -101,16 +153,37 @@ void setup() {
 
 }
 
+
+
 void loop() {
   // put your main code here, to run repeatedly:
   // wait 2 milliseconds before the next loop for the analog-to-digital
   // converter to settle after the last reading:
-  digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+  //digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
+  //delay(100);
+  //digitalWrite(LED_BUILTIN, LOW);   // turn the LED on (HIGH is the voltage level)
   delay(100);
-  digitalWrite(LED_BUILTIN, LOW);   // turn the LED on (HIGH is the voltage level)
-  delay(100);
-
+//gADCstate = !gADCstate;
+//digitalWrite(LED_BUILTIN, gADCstate = !gADCstate);  
+//digitalWrite(6, gADCstate = !gADCstate);  
 }
+
+
+void ADC_Handler(void)
+{
+//    LED1_TOGGLE;//to observe interrupt routine (one times only)
+    
+    //clearing interrupt flag
+    //REG_ADC_INTFLAG=ADC_INTFLAG_RESRDY;
+//ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; but lets just read the result instead!
+int val = ADC->RESULT.reg;
+//while (ADC->STATUS.bit.SYNCBUSY == 1);  
+syncADC();
+ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; //Need to reset interrupt
+
+digitalWrite(LED_BUILTIN, gADCstate = !gADCstate);  
+}
+
 
 #if 0
 void TC4_Handler()                              // Interrupt Service Routine (ISR) for timer TC4
