@@ -631,13 +631,17 @@ if(hasRx >= 0)
       case 'n':   //return micro second time now
          {
          int32_t now = micros();
+         digitalWrite(5, HIGH);
+
          auto timeRequestNumber = cmdBuf[1];
          TimePacket timePacket(now, timeRequestNumber);
          timePacket.write(Serial);
+
+         digitalWrite(5, LOW);
+
          break;   
          }
       case 'v':   //version info
-         digitalWrite(5, HIGH);
          Serial.write("ArduinoRT Example V0.9.0 $$$");
          Packet::ResetPacketCount(); //new session
 
