@@ -405,26 +405,26 @@ volatile int32_t gFirstADCPointus = 0;
 
 void ADC_Handler (void)
 {
-if(gState == kStartingSampling)
-   {
-   gFirstADCPointus = micros();
-   gState = kHadFirstSample;
-   }
-
 int val0 = 0;
 int val1 = 0;
 if (ADC->ADC_ISR & ADC_ISR_EOC6)   // ensure there was an End-of-Conversion and we read the ISR reg
-  {
-  val1 = *(ADC->ADC_CDR+6);    // get conversion result
-  //digitalWrite(8, HIGH);
-  }
+   {
+   val1 = *(ADC->ADC_CDR+6);    // get conversion result
+   //digitalWrite(8, HIGH);
+   }
 
 if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and we read the ISR reg
-  {
+   {
+   if(gState == kStartingSampling)
+      {
+      gFirstADCPointus = micros();
+      gState = kHadFirstSample;
+      }
+
   val0 = *(ADC->ADC_CDR+7) ;    // get conversion result
   //digitalWrite(12, HIGH);
 
-  if(gState == kSampling)
+  if(gState > kStartingSampling)
      {
     //val = 2048; //send a hard 0 in 2nd channel for testing only !!
      gSampleBuffers[0].Push(val0);           // stick in circular buffer for A0
