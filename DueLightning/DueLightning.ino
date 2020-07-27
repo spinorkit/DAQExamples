@@ -112,6 +112,30 @@ inline void restoreIRQState(uint32_t pmask)
 __set_PRIMASK(pmask);
 }
 
+/**
+ * Example of code to return a 64 bit microsecond time tick. Assumes it will be called
+ * at least once every 1.19 hours in order to catch all wrap arounds of the 32 bit counter!
+ * However, it must not be called continously from e.g. loop() because this will result in
+ * all interrupts being disabled most of the time!
+ */
+
+uint64_t micros64()
+{
+auto irqState = saveIRQState(); //disable all interrupts!
+static volatile uint32_t sLastNow = micros();
+static volatile uint32_t high32 = 0;
+
+uint32_t now32 = micros();
+if(now32-sLastNow < 0)
+   {
+   ++high32;
+   }
+
+restoreIRQState(irqState); //enable any interrupts that were previously enabled
+
+return (high32 << 32) + now32;
+}
+
 enum State
 {
 kIdle,
@@ -402,6 +426,7 @@ TRingBuf gSampleBuffers[kADCChannels];
 
 
 volatile int32_t gFirstADCPointus = 0;
+volatile uint64_t gFirstADCPoint64us = 0;
 
 void ADC_Handler (void)
 {
@@ -418,6 +443,7 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
    if(gState == kStartingSampling)
       {
       gFirstADCPointus = micros();
+      //gFirstADCPoint64us = micros64();
       gState = kHadFirstSample;
       }
 
@@ -600,6 +626,7 @@ debugNewLine();   //Readability while testing only!
 
 void loop()
 {
+//micros64();
 
 //int rxAvail = Serial.available();
 int hasRx = Serial.peek();
@@ -631,6 +658,7 @@ if(hasRx >= 0)
       case 'n':   //return micro second time now
          {
          int32_t now = micros();
+         //uint64_t now64 = micros64();
          digitalWrite(5, HIGH);
 
          auto timeRequestNumber = cmdBuf[1];
