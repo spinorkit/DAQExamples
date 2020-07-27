@@ -37,6 +37,13 @@ FOR SAMD51:
 
 const int kADCPointsPerSec = 4;
 
+const int kADCStartChan = 2; //A2
+const int kADCChannels = 2; 
+
+const int kADCEndChan = kADCStartChan + kADCChannels;
+
+volatile int gChan = 0;
+
 inline void syncADC() 
 {
   while (ADC->STATUS.bit.SYNCBUSY);
@@ -75,6 +82,18 @@ analogReadResolution(12);
 analogReference(AR_DEFAULT);
 
 pinPeripheral(A2, PIO_ANALOG);
+pinPeripheral(A3, PIO_ANALOG);
+
+//ADC->INPUTCTRL.bit.INPUTOFFSET = kADCStartChan;
+syncADC();
+ADC->INPUTCTRL.bit.MUXPOS = kADCStartChan;
+syncADC();
+ADC->INPUTCTRL.bit.INPUTOFFSET = 0;
+syncADC();
+ADC->INPUTCTRL.bit.INPUTSCAN = 0;//kADCChannels-1;
+syncADC();
+
+gChan = 0;
 
 //PM->APBCMASK.reg |= PM_APBCMASK_ADC; already done by wiring.c
 
@@ -178,10 +197,75 @@ void ADC_Handler(void)
 //ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; but lets just read the result instead!
 int val = ADC->RESULT.reg;
 //while (ADC->STATUS.bit.SYNCBUSY == 1);  
-syncADC();
-ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; //Need to reset interrupt
+// syncADC();
+// ADC->INTFLAG.reg = ADC_INTFLAG_RESRDY; //Need to reset interrupt
 
-digitalWrite(LED_BUILTIN, gADCstate = !gADCstate);  
+// //ADC->INPUTCTRL.bit.MUXPOS = g_APinDescription[pin].ulADCChannelNumber; // Selection for the positive ADC input
+syncADC();
+int chan = ADC->INPUTCTRL.bit.MUXPOS;
+syncADC();
+
+//gRingBuffer[chan-kADCStartChan].push(val);
+
+syncADC();
+if(++chan < kADCEndChan)
+   {
+   ADC->INPUTCTRL.bit.MUXPOS = chan;      
+   syncADC();
+   // ADC->EVCTRL.reg = 0; //not start on event
+   // syncADC();
+
+   ADC->SWTRIG.bit.START = 1;
+   }
+else
+   {
+   ADC->INPUTCTRL.bit.MUXPOS = kADCStartChan;
+   
+   // syncADC();
+   // ADC->EVCTRL.reg = ADC_EVCTRL_STARTEI; //Start on event
+
+   }
+
+syncADC();
+digitalWrite(6, gADCstate = !gADCstate );  
+
+
+// syncADC();
+// int offset = ADC->INPUTCTRL.bit.INPUTOFFSET;
+// syncADC();
+
+// if(gChan >= kADCChannels-1)
+//    {
+//    gChan = 0;
+//    syncADC();
+//    ADC->CTRLB.bit.FREERUN = 0;
+
+//    syncADC();
+//    ADC->EVCTRL.reg = ADC_EVCTRL_STARTEI; //Start on event
+
+//    syncADC();
+//    ADC->INPUTCTRL.bit.INPUTOFFSET = 0;   
+
+//    //syncADC();
+//    //digitalWrite(6, gADCstate = !gADCstate );  
+
+//    }
+// else if(gChan == 0)
+//    {
+//    syncADC();
+//    ADC->EVCTRL.reg = 0; //not start on event
+
+//    syncADC();
+//    ADC->CTRLB.bit.FREERUN = 1;
+
+//    syncADC();
+//    digitalWrite(6, gADCstate = !gADCstate );  
+
+//    }
+// syncADC();
+// ++gChan;
+
+//digitalWrite(LED_BUILTIN, gADCstate = !gADCstate);  
 }
 
 
