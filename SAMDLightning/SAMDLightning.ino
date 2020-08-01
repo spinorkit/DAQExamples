@@ -608,7 +608,13 @@ protected:
 
 void StartSampling()
 {
-//Rrestart the ADC timer here
+//Restart the ADC timer here
+adcTimer.enable(false);
+
+NVIC_DisableIRQ(ADC_IRQn);
+
+adc_setup();
+
 startADCTimer(gADCPointsPerSec);
 
 for(int chan(0); chan<kADCChannels;++chan)
