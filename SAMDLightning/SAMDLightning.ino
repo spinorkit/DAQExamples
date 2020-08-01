@@ -315,7 +315,8 @@ syncADC();
 int chan = ADC->INPUTCTRL.bit.MUXPOS;
 syncADC();
 
-gSampleBuffers[chan-kADCStartChan].Push(val);
+if(!gSampleBuffers[chan-kADCStartChan].Push(val))
+   digitalWrite(LED_BUILTIN, LOW); //Turn off LED to indicate overflow
 
 syncADC();
 if(++chan < kADCEndChan)
