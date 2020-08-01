@@ -108,8 +108,8 @@ EVSYS->CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |               // No ev
 analogReadResolution(12);
 analogReference(AR_DEFAULT);
 
+pinPeripheral(A1, PIO_ANALOG);
 pinPeripheral(A2, PIO_ANALOG);
-pinPeripheral(A3, PIO_ANALOG);
 
 //ADC->INPUTCTRL.bit.INPUTOFFSET = kADCStartChan;
 syncADC();
