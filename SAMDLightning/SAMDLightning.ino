@@ -294,7 +294,7 @@ volatile bool gADCstate = false;
 
 void setup() 
 {
-Serial.begin (115200);
+Serial.begin (0);
 while(!Serial);
 
 pinMode(6, OUTPUT); //Test only - toggles on each ADC_Handler()
