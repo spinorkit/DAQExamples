@@ -15,8 +15,11 @@ const enum PacketType {
    kNotFound = 0 | 0,
    kData = 1 | 0,
    kTime = 2 | 0,
-   kFirstSampleTime = 3 | 0
+   kFirstSampleTime = 3 | 0,
+   kMediumData = 4 | 0
 }
+
+const kPointsPerMediumSizeDataPacket = 10;
 
 //Don't fire notifications into Lightning too often!
 const kMinimumSamplingUpdatePeriodms = 50;
@@ -36,6 +39,8 @@ function packetTypeToSize(type: PacketType) {
          return 9;
       case PacketType.kFirstSampleTime:
          return 8;
+      case PacketType.kMediumData:
+         return 4 + kPointsPerMediumSizeDataPacket * 4;
    }
    return 0;
 }
@@ -218,6 +223,9 @@ export class Parser {
                      case 0x44: //'D'
                         this.packetType = PacketType.kData;
                         break;
+                     case 0x4d: //'M'
+                        this.packetType = PacketType.kMediumData;
+                        break;
                      case 0x4e: //'N'
                         this.packetType = PacketType.kTime;
                         break;
@@ -338,13 +346,19 @@ export class Parser {
       let ok = false;
       switch (this.packetType) {
          case PacketType.kData:
-            ok = this.processDataPacketPayload(data);
+            ok = this.processDataPacketPayload(data, 1);
             break;
          case PacketType.kTime:
             ok = this.processTimePacketPayload(data);
             break;
          case PacketType.kFirstSampleTime:
             ok = this.processFirstSampleTimePacketPayload(data);
+            break;
+         case PacketType.kMediumData:
+            ok = this.processDataPacketPayload(
+               data,
+               kPointsPerMediumSizeDataPacket
+            );
             break;
          default:
             console.error(
@@ -448,7 +462,7 @@ export class Parser {
       return true;
    }
 
-   processDataPacketPayload(data: Buffer) {
+   processDataPacketPayload(data: Buffer, pointsPerPacket: number) {
       // assert(
       //    this.parserState === ParserState.kHasExpectedPacket ||
       //       this.parserState === ParserState.kUnexpectedPacket
@@ -469,10 +483,11 @@ export class Parser {
 
       //Insert invalid samples if packets missing
       if (this.parserState === ParserState.kUnexpectedPacket) {
-         const lostSamples =
+         const lostPackets =
             (this.unexpectedPacketCount - this.expectedPacketCount) & 255;
-         if (lostSamples) {
+         if (lostPackets) {
             if (this.isSampling()) {
+               const lostSamples = lostPackets * pointsPerPacket;
                for (let i = 0; i < lostSamples; ++i) {
                   for (
                      let streamIndex = 0;
@@ -494,20 +509,22 @@ export class Parser {
       //Now add the data from the latest packet
       if (this.isSampling()) {
          let byteIndex = 0; //kStartOfDataIndex;
-         for (
-            let streamIndex = 0;
-            streamIndex < nStreams;
-            ++streamIndex, byteIndex += 2
-         ) {
-            const outStreamBuffer = outStreamBuffers[streamIndex];
-            if (!outStreamBuffer) {
-               continue;
-            } // Don't produce data for disabled streams.
+         for (let pt = 0; pt < pointsPerPacket; ++pt) {
+            for (
+               let streamIndex = 0;
+               streamIndex < nStreams;
+               ++streamIndex, byteIndex += 2
+            ) {
+               const outStreamBuffer = outStreamBuffers[streamIndex];
+               if (!outStreamBuffer) {
+                  continue;
+               } // Don't produce data for disabled streams.
 
-            // The Arduino format is little endian 16 bit.
-            const value = data[byteIndex] + (data[byteIndex + 1] << 8);
+               // The Arduino format is little endian 16 bit.
+               const value = data[byteIndex] + (data[byteIndex + 1] << 8);
 
-            outStreamBuffers[streamIndex].writeInt(value);
+               outStreamBuffers[streamIndex].writeInt(value);
+            }
          }
       }
       return true;
