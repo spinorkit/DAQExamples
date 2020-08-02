@@ -1,0 +1,7 @@
+{
+    "board": "SparkFun:samd:samd51_thing_plus",
+    "configuration": "cache=on",
+    "sketch": "SAMD51Lightning.ino",
+    "output": "../~~buildSAMD51Lightning",
+    "port": "COM11"
+}
