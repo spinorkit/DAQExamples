@@ -29,7 +29,7 @@ const kPacketHeaderSizeBytes = 3; //not including the packet number
 const kPacketStartByte = 0x50; //'P'
 const kPacket2ndByte = 0xa0;
 
-const kMaxPacketSizeBytes = 9;
+const kMaxPacketSizeBytes = 4 + kPointsPerMediumSizeDataPacket * 4;
 
 function packetTypeToSize(type: PacketType) {
    switch (type) {
@@ -40,7 +40,7 @@ function packetTypeToSize(type: PacketType) {
       case PacketType.kFirstSampleTime:
          return 8;
       case PacketType.kMediumData:
-         return 4 + kPointsPerMediumSizeDataPacket * 4;
+         return kMaxPacketSizeBytes;
    }
    return 0;
 }
