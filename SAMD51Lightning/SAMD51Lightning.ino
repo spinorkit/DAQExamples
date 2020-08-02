@@ -298,11 +298,13 @@ const int kLog2BufferPoints = 13;
 const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
 
 const int kPointsPerPacket = 1;
+const int kPointsPerMediumSizePacket = 10;
 
 const int kLog2BufferSizeBytes = 15;
 const int kLog2ADCChannels = 1;
 const int kLog2BytesPerSample = 1;
 
+int gADCPointsPerPacket = kPointsPerPacket;
 
 typedef RingBufferSized<int16_t, kLog2BufferPoints> TRingBuf;
 
@@ -368,15 +370,23 @@ else
 digitalWrite(6, gADCstate = !gADCstate );  
 }
 
+class PacketBase
+{
+protected:
+   static uint8_t sPacketCount;  
+};
 
-class Packet
+uint8_t PacketBase::sPacketCount = 0;
+
+
+class Packet : protected PacketBase
 {
    //The header is 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
    //3rd byte is the packet time (0x04) for data packets.
    //The head and packet type is followed by a 1 byte packet count number,
    //making a total of 4 bytes before the payload daya that need to match the 
    //expected pattern(s) before the client can detect a packet.
-   const char sHeaderAndPacketType[3] = {'P',0xA0,'D'}; //D for data
+   const char sHeader[2] = {'P',0xA0}; //D for data
 
 public:
 
@@ -391,7 +401,7 @@ public:
 
    bool addSample(int chan, int16_t sample)
       {
-      if(mPoint >= kPointsPerPacket)
+      if(mPoint >= gADCPointsPerPacket)
          return false;
 //Testing!!
 //if(chan == 0)
@@ -410,26 +420,25 @@ public:
    //returns number of bytes written
    int write(Stream &stream) const
       {
-      int n = stream.write(sHeaderAndPacketType, 3);
+      int n = stream.write(sHeader, 2);
+      //Write the packet type byte (D for data, M for medium sized data packet)
+      n += stream.write(uint8_t(gADCPointsPerPacket==1?'D':'M'));
       n += stream.write(sPacketCount++);
-      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(int16_t)*kADCChannels*gADCPointsPerPacket);
       return n;
       }
 
 
 protected:
 
-   static uint8_t sPacketCount;  
-
    int mPoint;
-   int16_t mData[kPointsPerPacket][kADCChannels];
+   int16_t mData[kPointsPerMediumSizePacket][kADCChannels];
 
 };
 
-uint8_t Packet::sPacketCount = 0;   
 
 
-class TimePacket : protected Packet
+class TimePacket : protected PacketBase
 {
    const char sHeaderAndPacketType[3] = {'P',0xA0,'N'}; //'N' for now
 
@@ -456,7 +465,7 @@ protected:
    uint8_t mTimeRequestNumber;
 };
 
-class FirstSampleTimePacket : protected Packet
+class FirstSampleTimePacket : protected PacketBase
 {
    const char sHeaderAndPacketType[3] = {'P',0xA0,'F'}; //'F' for First sample time
 
@@ -591,6 +600,11 @@ if(hasRx >= 0)
          unsigned int index = rateChar - '0';
          if(index < sizeof(kSampleRates)/sizeof(int))
             gADCPointsPerSec = kSampleRates[index];
+         if(gADCPointsPerSec > 100)
+            gADCPointsPerPacket = kPointsPerMediumSizePacket;
+         else
+            gADCPointsPerPacket = kPointsPerPacket;
+            
          break;
          }
       default:
@@ -617,11 +631,11 @@ for(int chan(1); chan<kADCChannels;++chan)
    }
 
 
-while(points >= kPointsPerPacket)
+while(points >= gADCPointsPerPacket)
    {
    Packet packet;
 
-   for(int pt(0);pt<kPointsPerPacket;++pt)
+   for(int pt(0);pt<gADCPointsPerPacket;++pt)
       {
       for(int chan(0); chan<kADCChannels;++chan)
          {
