@@ -34,6 +34,8 @@ FOR SAMD51:
 #define TIMER5_OUT1 SCK
 #endif
 
+//#define ENABLE_ADCTIMER_PWMOUT 1
+
 const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) per packet
 int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
 
@@ -41,7 +43,7 @@ const int kNSampleRates = 6;
 const int kSampleRates[] = {4000, 2000, 1000, 400, 250, 100};
 
 
-const int kADCStartChan = 2; //A2
+const int kADCStartChan = 2; //A1
 const int kADCChannels = 2; //must be power of 2 (for now)
 
 const int kADCEndChan = kADCStartChan + kADCChannels;
@@ -69,7 +71,7 @@ adcTimer.configure(TC_CLOCK_PRESCALER_DIV1, // prescaler
 adcTimer.setCompare(0, VARIANT_MCK/frequency);
 #ifdef ENABLE_ADCTIMER_PWMOUT
 //N.B. this will be at half the rate of the ADC (i.e. each edge triggers a set of conversions across channels)
-if (! adcTimer.PWMout(true, 0, A1)) {
+if (! adcTimer.PWMout(true, 0, TIMER4_OUT0)) {
    Serial.println("Failed to configure PWM output");
 }
 #endif
@@ -317,6 +319,12 @@ syncADC();
 
 if(!gSampleBuffers[chan-kADCStartChan].Push(val))
    digitalWrite(LED_BUILTIN, LOW); //Turn off LED to indicate overflow
+
+if(chan == kADCStartChan && gState == kStartingSampling)
+   {
+   gFirstADCPointus = micros();
+   gState = kHadFirstSample;   
+   }
 
 syncADC();
 if(++chan < kADCEndChan)
