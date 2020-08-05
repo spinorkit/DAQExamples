@@ -95,9 +95,8 @@ TC_Start(tc, channel);
 const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) per packet
 int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
 
-const int kNSampleRates = 6;
-//const int kSampleRates[] = {100, 250, 400, 1000, 2000, 4000};
-const int kSampleRates[] = {4000, 2000, 1000, 400, 250, 100};
+const int kSampleRates[] = {4000, 2000, 1000, 400, 200, 100};
+const int kNSampleRates = sizeof(kSampleRates)/sizeof(int);
 
 inline uint32_t saveIRQState(void)
 {
