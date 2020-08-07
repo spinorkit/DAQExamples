@@ -1,38 +1,14 @@
-
-//https://www.arduino.cc/en/Hacking/PinMappingSAM3X
-
-/*
-Due Pin Number	SAM3X Pin Name	Mapped Pin Name	Max Output Current (mA)	Max Current Sink (mA) Function
-4	PA16	Analog In 0	3	6       AD7
-55	PA24	Analog In 1	3	6     AD6
-56	PA23	Analog In 2	3	6     AD5
-57	PA22	Analog In 3	3	6     AD4
-58	PA6	Analog In 4	3	6       AD3
-59	PA4	Analog In 5	3	6       AD2
-60	PA3	Analog In 6	3	6       AD1
-61	PA2	Analog In 7	3	6       AD0
-62	PB17	Analog In 8	3	6     AD10
-63	PB18	Analog In 9	3	6     AD11
-64	PB19	Analog In 10	3	6   AD12
-65	PB20	Analog In 11	3	6   AD13
-66	PB15	DAC0	3	6
-67	PB16	DAC1	3	6
+/**
+ * Arduino Due Lightning compatible firmware example with timer driven ADC and round-trip clock
+ * synchronization support. 
+ * The corresponding Lightning Device plugin script is ArduinoRoundTrip.ts.
 */
 
 
 /**
- SR/IRQ TC Channel	Due pins
-TC0	TC0	0	2, 13
-TC1	TC0	1	60, 61
-TC2	TC0	2	58
-TC3	TC1	0	none  <- this line in the example below
-TC4	TC1	1	none
-TC5	TC1	2	none
-TC6	TC2	0	4, 5
-TC7	TC2	1	3, 10
-TC8	TC2	2	11, 12
+ * We recommend using the Due native USB port for communication with the Due and plugging 
+ * in the programming serial port inorder to upload the firmware.
 */
-
 #define Serial SerialUSB
 
 /**
@@ -50,7 +26,7 @@ uint32_t TC_GetCV(Tc *tc, uint32_t chan) {
 	return tc->TC_CHANNEL[chan].TC_CV;
 }
 
-
+#if NEED_ANOTHER_TIMER
 void startTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) 
 {
 pmc_set_writeprotect(false);
@@ -64,7 +40,7 @@ tc->TC_CHANNEL[channel].TC_IER=TC_IER_CPCS;
 tc->TC_CHANNEL[channel].TC_IDR=~TC_IER_CPCS;
 NVIC_EnableIRQ(irq);
 }
-
+#endif
 
 void startADCTimer(Tc *tc, uint32_t channel, IRQn_Type irq, uint32_t frequency) 
 {
@@ -83,7 +59,7 @@ TC_Configure(tc, channel,
    TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_CLEAR | TC_CMR_BCPB_CLEAR | TC_CMR_BCPC_CLEAR
    ); 
 
-uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 above
+uint32_t rc = VARIANT_MCK/2/frequency; //2 because we selected TIMER_CLOCK1 prescale above
 TC_SetRC(tc, channel, rc);
 TC_SetRA(tc, channel, rc/2); //50% high, 50% low
 
@@ -111,30 +87,6 @@ inline void restoreIRQState(uint32_t pmask)
 __set_PRIMASK(pmask);
 }
 
-/**
- * Example of code to return a 64 bit microsecond time tick. Assumes it will be called
- * at least once every 1.19 hours in order to catch all wrap arounds of the 32 bit counter!
- * However, it must not be called continously from e.g. loop() because this will result in
- * all interrupts being disabled most of the time!
- */
-
-uint64_t micros64()
-{
-auto irqState = saveIRQState(); //disable all interrupts!
-static volatile uint32_t sLastNow = micros();
-static volatile uint32_t high32 = 0;
-
-uint32_t now32 = micros();
-if(now32-sLastNow < 0)
-   {
-   ++high32;
-   }
-
-restoreIRQState(irqState); //enable any interrupts that were previously enabled
-
-return (high32 << 32) + now32;
-}
-
 enum State
 {
 kIdle,
@@ -154,12 +106,14 @@ void debugNewLine()
 
 void setup()
 {
-Serial.begin (115200);
+Serial.begin (115200); //baudrate ignored by SerialUSB!
 while(!Serial);
 
 #ifdef ENABLE_SERIAL_DEBUGGING 
-SerialUSB.begin(0);  //debugging
+Serial.begin(0);  //debugging
 #endif
+
+pinMode(LED_BUILTIN, OUTPUT);
 
 pinMode(5, OUTPUT);
 digitalWrite(5, LOW);
@@ -182,7 +136,7 @@ SerialUSB.println("Arduino setup complete");
 #endif
 }
 
-
+//Option HW output synched with ADC trigger
 void setup_pio_TIOA0 ()  // Configure Ard pin 2 as output from TC0 channel A (copy of trigger event)
 {
   PIOB->PIO_PDR = PIO_PB25B_TIOA0 ;  // disable PIO control
@@ -204,6 +158,8 @@ void dac_setup ()
 
   DACC->DACC_IDR = 0xFFFFFFFF ; // no interrupts
   DACC->DACC_CHER = DACC_CHER_CH0 << 0 ; // enable chan0
+
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void dac_write (int val)
@@ -216,7 +172,7 @@ void dac_write (int val)
 void adc_setup ()
 {
 /* 
-variant.cpp Arduino ADC initialization
+From variant.cpp Arduino ADC initialization
 
  // Initialize Analog Controller
   pmc_enable_periph_clk(ID_ADC);
@@ -270,18 +226,17 @@ Transfer Period = (TRANSFER * 2 + 3) ADCClock periods.
 
   NVIC_EnableIRQ (ADC_IRQn) ;   // enable ADC interrupt vector
   ADC->ADC_IDR = 0xFFFFFFFF ;   // disable interrupts
-  //ADC->ADC_IER = 0x80 ;         // enable AD7 End-Of-Conv interrupt (Arduino pin A0)
   ADC->ADC_IER = 0x80 ;         // enable AD7 End-Of-Conv interrupt (Arduino pin A0)
   ADC->ADC_CHDR = 0xFFFF ;      // disable all channels
   //ADC->ADC_CHER = 0x80 ;        // enable just A0
-  ADC->ADC_CHER = 0xc0 ;        // enable A1 and A0
+  ADC->ADC_CHER = 0xc0 ;        // enable A1 and A0 (2 ADC channels, interrupt on the last one, AD7 only)
   ADC->ADC_CGR = 0x15555555 ;   // All gains set to x1
   ADC->ADC_COR = 0x00000000 ;   // All offsets off
  
   ADC->ADC_MR = (ADC->ADC_MR & 0xFFFFFFF0) | (1 << 1) | ADC_MR_TRGEN ;  // 1 = trig source TIO from TC0
 }
 
-template <class T, uint Log2Size>
+template <class T, unsigned int Log2Size>
 class RingBufferSized
    {
    public:
@@ -409,17 +364,14 @@ const int kMaxCommandLenBytes = 64;
 const int kADCChannels = 2; //must be power of 2 (for now)
 const int kBytesPerSample = sizeof(int16_t);
 
-const int kLog2BufferPoints = 13;
-const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
-
+//We use two sizes of data packet, one for low sampling rates, with just one point per packet
+//and one for higher sampling rates with 10 points per packet.
 const int kPointsPerPacket = 1;
 const int kPointsPerMediumSizePacket = 10;
 
-const int kLog2BufferSizeBytes = 15;
-const int kLog2ADCChannels = 1;
-const int kLog2BytesPerSample = 1;
-
 int gADCPointsPerPacket = kPointsPerPacket;
+
+const int kLog2BufferPoints = 13; //8192 points
 
 typedef RingBufferSized<int16_t, kLog2BufferPoints> TRingBuf;
 
@@ -444,7 +396,6 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
    if(gState == kStartingSampling)
       {
       gFirstADCPointus = micros();
-      //gFirstADCPoint64us = micros64();
       gState = kHadFirstSample;
       }
 
@@ -453,10 +404,12 @@ if (ADC->ADC_ISR & ADC_ISR_EOC7)   // ensure there was an End-of-Conversion and 
 
   if(gState > kStartingSampling)
      {
-    //val = 2048; //send a hard 0 in 2nd channel for testing only !!
-     gSampleBuffers[0].Push(val0);           // stick in circular buffer for A0
+    //val = 2048; //send a hard 0 in 2nd channel (for testing only) !!
+     if(!gSampleBuffers[0].Push(val0))       // stick in circular buffer for A0
+         digitalWrite(LED_BUILTIN, LOW);     //Turn off LED to indicate overflow
      gSampleBuffers[1].Push(val1);           // stick in circular buffer for A1
-     dac_write (0xFFF & ~val0) ;       // copy inverted to DAC output FIFO
+
+     dac_write (0xFFF & ~val0) ;             // copy inverted to DAC output FIFO
      //Serial.print("\t");
      //Serial.println(val,HEX);
      }
@@ -477,10 +430,10 @@ uint8_t PacketBase::sPacketCount = 0;
 
 class Packet : protected PacketBase
 {
-   //The header is 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
-   //3rd byte is the packet time (0x04) for data packets.
+   //The header is really 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
+   //3rd byte is the packet type, e.g. (0x04) for 1 point data packets.
    //The head and packet type is followed by a 1 byte packet count number,
-   //making a total of 4 bytes before the payload daya that need to match the 
+   //making a total of 4 bytes (before the payload data) that need to match the 
    //expected pattern(s) before the client can detect a packet.
    const char sHeader[2] = {'P',0xA0}; 
 
@@ -499,10 +452,6 @@ public:
       {
       if(mPoint >= gADCPointsPerPacket)
          return false;
-//Testing!!
-//if(chan == 0)
-//   mData[mPoint][chan] = 0;
-//else
       mData[mPoint][chan] = (sample << 4) - 0x8000;
 
       return true;
@@ -517,7 +466,7 @@ public:
    int write(Stream &stream) const
       {
       int n = stream.write(sHeader, 2);
-      //Write the packet type byte (D for data, M for medium sized data packet)
+      //Write the packet type byte ('D' for data, 'M' for medium sized data packet)
       n += stream.write(uint8_t(gADCPointsPerPacket==1?'D':'M'));
       n += stream.write(sPacketCount++);
       n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(int16_t)*kADCChannels*gADCPointsPerPacket);
@@ -589,7 +538,7 @@ void StartSampling()
 {
 digitalWrite(5, LOW);
 
-//TODO: restart the ADC timer here
+//Restart the ADC timer here
 startADCTimer(TC0, 0, TC0_IRQn, gADCPointsPerSec);
 
 for(int chan(0); chan<kADCChannels;++chan)
@@ -601,6 +550,7 @@ for(int chan(0); chan<kADCChannels;++chan)
 digitalWrite(12, LOW); //Clear Buffer overflow
 //Packet::ResetPacketCount();
 gState = kStartingSampling;
+digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void StopSampling()
@@ -613,6 +563,8 @@ for(int chan(0); chan<kADCChannels;++chan)
    auto buffer = gSampleBuffers[chan];
    buffer.Clear();
    }
+
+digitalWrite(LED_BUILTIN, LOW);
 }
 
 
@@ -634,9 +586,6 @@ debugNewLine();   //Readability while testing only!
 
 void loop()
 {
-//micros64();
-
-//int rxAvail = Serial.available();
 int hasRx = Serial.peek();
 
 if(hasRx >= 0)
@@ -644,10 +593,10 @@ if(hasRx >= 0)
    char cmdBuf[kMaxCommandLenBytes];
    int bytesRead = Serial.readBytesUntil('\n', cmdBuf, kMaxCommandLenBytes);
    #ifdef ENABLE_SERIAL_DEBUGGING
-   SerialUSB.println("bytesRead="+String(bytesRead));
-   SerialUSB.println(cmdBuf[0], HEX);
-   SerialUSB.println(cmdBuf[1], HEX);
-   SerialUSB.println();
+   Serial.println("bytesRead="+String(bytesRead));
+   Serial.println(cmdBuf[0], HEX);
+   Serial.println(cmdBuf[1], HEX);
+   Serial.println();
    #endif
    auto cmd = cmdBuf[0];
    switch (cmd)
@@ -666,7 +615,6 @@ if(hasRx >= 0)
       case 'n':   //return micro second time now
          {
          int32_t now = micros();
-         //uint64_t now64 = micros64();
          digitalWrite(5, HIGH);
 
          auto timeRequestNumber = cmdBuf[1];
@@ -682,7 +630,7 @@ if(hasRx >= 0)
          Packet::ResetPacketCount(); //new session
 
          #ifdef ENABLE_SERIAL_DEBUGGING
-         SerialUSB.println("Sent version info");
+         Serial.println("Sent version info");
          #endif
          break;
       case '~': //sample rate
@@ -691,6 +639,7 @@ if(hasRx >= 0)
          unsigned int index = rateChar - '0';
          if(index < sizeof(kSampleRates)/sizeof(int))
             gADCPointsPerSec = kSampleRates[index];
+
          if(gADCPointsPerSec > 100)
             gADCPointsPerPacket = kPointsPerMediumSizePacket;
          else
@@ -736,9 +685,9 @@ while(points >= gADCPointsPerPacket)
       packet.nextPoint();   
       }
    
-   digitalWrite(7, HIGH);
+   digitalWrite(7, HIGH); //Debugging!
    packet.write(Serial);
-   digitalWrite(7, LOW);
+   digitalWrite(7, LOW);  //Debugging!
 
    --points;
 
@@ -746,3 +695,38 @@ while(points >= gADCPointsPerPacket)
    }
 
 }
+
+
+/*
+Due pin mappings (see https://www.arduino.cc/en/Hacking/PinMappingSAM3X)
+
+Due Pin Number	SAM3X Pin Name	Mapped Pin Name	Max Output Current (mA)	Max Current Sink (mA) Function
+4	PA16	Analog In 0	3	6       AD7
+55	PA24	Analog In 1	3	6     AD6
+56	PA23	Analog In 2	3	6     AD5
+57	PA22	Analog In 3	3	6     AD4
+58	PA6	Analog In 4	3	6       AD3
+59	PA4	Analog In 5	3	6       AD2
+60	PA3	Analog In 6	3	6       AD1
+61	PA2	Analog In 7	3	6       AD0
+62	PB17	Analog In 8	3	6     AD10
+63	PB18	Analog In 9	3	6     AD11
+64	PB19	Analog In 10	3	6   AD12
+65	PB20	Analog In 11	3	6   AD13
+66	PB15	DAC0	3	6
+67	PB16	DAC1	3	6
+*/
+
+
+/**
+ SR/IRQ TC Channel	Due pins
+TC0	TC0	0	2, 13
+TC1	TC0	1	60, 61
+TC2	TC0	2	58
+TC3	TC1	0	none  <- this line in the example below
+TC4	TC1	1	none
+TC5	TC1	2	none
+TC6	TC2	0	4, 5
+TC7	TC2	1	3, 10
+TC8	TC2	2	11, 12
+*/
