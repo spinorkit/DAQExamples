@@ -89,7 +89,7 @@ adcTimer.configure(TC_CLOCK_PRESCALER_DIV1, // prescaler
             );
 //adcTimer.setPeriodMatch(1000, 200);      // channel 1 only, 200/1000 count
 //Adafruit timer routines set the timer source to GCLK1 (48 MHz)
-adcTimer.setCompare(0, VARIANT_GCLK1_FREQ/frequency);
+adcTimer.setCompare(0, VARIANT_GCLK1_FREQ/frequency - 1);
 #ifdef ENABLE_ADCTIMER_PWMOUT
 //N.B. this will be at half the rate of the ADC (i.e. each edge triggers a set of conversions across channels)
 if (! adcTimer.PWMout(true, 0, TIMER4_OUT0)) {
