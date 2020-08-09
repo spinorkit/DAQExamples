@@ -48,9 +48,8 @@ const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) pe
 
 int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
 
-const int kNSampleRates = 6;
-const int kSampleRates[] = {4000, 2000, 1000, 400, 250, 100};
-
+const int kSampleRates[] = {4000, 2000, 1000, 400, 200, 100};
+const int kNSampleRates = sizeof(kSampleRates)/sizeof(int);
 
 const int kADCStartChan = 2; //A1
 
@@ -441,7 +440,7 @@ class Packet : protected PacketBase
    //The head and packet type is followed by a 1 byte packet count number,
    //making a total of 4 bytes before the payload daya that need to match the 
    //expected pattern(s) before the client can detect a packet.
-   const char sHeader[2] = {'P',0xA0}; //D for data
+   const char sHeader[2] = {'P',0xA0}; 
 
 public:
 
