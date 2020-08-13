@@ -1,9 +1,11 @@
 #include "src/Adafruit_ZeroTimer.h"
 
+#define TIMER_OUTPUT_FOR_TEST 1
+
 Adafruit_ZeroTimer adcTimer(4);
 
 #ifdef TIMER_OUTPUT_FOR_TEST
-Adafruit_ZeroTimer zt3(3); //Testing
+Adafruit_ZeroTimer zt3(3, GCLK_PCHCTRL_GEN_GCLK2_Val); //Testing
 #endif
 
 /* Valid PWM outs (for Adafruit Feather ):
@@ -43,7 +45,7 @@ FOR SAMD51:
 #ifdef TIMING_CHECK
 const int kDefaultADCPointsPerSec = 1;//1024;//100; //~5000 max with 2 samples (1 point) per packet
 #else
-const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) per packet
+const int kDefaultADCPointsPerSec = 1000; //~5000 max with 2 samples (1 point) per packet
 #endif
 
 int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
@@ -342,7 +344,10 @@ volatile bool gFirstSampleTimeRequested = false;
 
 volatile bool gADCstate = false;
 
-
+/**
+ * Measured one fine step (133 to 134) to give a frequency offset of 5 parts in 10000
+ * with the SAMD51.
+*/
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
 
@@ -363,6 +368,11 @@ const int kHighSpeedTimerTicksPerUSBFrame = 1000;
 extern "C" 
 {
 
+// inline setDFLLFine(int8_t fine)
+// {
+
+// }
+
 void USBHandlerHook(void)
 {
 if(USB->DEVICE.INTFLAG.bit.SOF)
@@ -377,17 +387,18 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
    if(gPrevFrameus >= 0)
       {
       int32_t deltaTicks = frameus - gPrevFrameus;
-         //frameHSTick ranges [0, kHighSpeedTimerTicksPerUSBFrame) so deltaTicks jumps around between roughly -1, 0 and kHighSpeedTimerTicksPerUSBFrame-1.
-   //These tests wrap the numbers like kHighSpeedTimerTicksPerUSBFrame-1 to e.g. 1.
-   if(deltaTicks > kHighSpeedTimerTicksPerUSBFrame/2)
-      deltaTicks -= kHighSpeedTimerTicksPerUSBFrame;
-   else if(deltaTicks < -kHighSpeedTimerTicksPerUSBFrame/2)
-      deltaTicks += kHighSpeedTimerTicksPerUSBFrame;
+      //frameHSTick ranges [0, kHighSpeedTimerTicksPerUSBFrame) so deltaTicks jumps around between roughly -1, 0 and kHighSpeedTimerTicksPerUSBFrame-1.
+
+      //These tests wrap the numbers like kHighSpeedTimerTicksPerUSBFrame-1 to e.g. 1.
+      if(deltaTicks > kHighSpeedTimerTicksPerUSBFrame/2)
+         deltaTicks -= kHighSpeedTimerTicksPerUSBFrame;
+      else if(deltaTicks < -kHighSpeedTimerTicksPerUSBFrame/2)
+         deltaTicks += kHighSpeedTimerTicksPerUSBFrame;
 
 
-      sPSDFreqAccum += kLeadGain*deltaTicks; //Lead (1st order) feedback, since we are integrating deltaTicks, and deltaTicks is the derivative of the phase
+         sPSDFreqAccum += kLeadGain*deltaTicks; //Lead (1st order) feedback, since we are integrating deltaTicks, and deltaTicks is the derivative of the phase
 
-   int phase = frameus;
+      int phase = frameus;
          //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
       if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)              
          phase -= kHighSpeedTimerTicksPerUSBFrame;
@@ -401,7 +412,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
 
       int32_t newDCOControlVal = 128 - sPSDFreqAccum/kOneOverGain;
 
-      OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+      //OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
 
       }
    gPrevFrameus = frameus;
@@ -431,7 +442,7 @@ digitalWrite(LED_BUILTIN, LOW);
                 TC_COUNTER_SIZE_16BIT,   // bit width of timer/counter
                 TC_WAVE_GENERATION_MATCH_PWM // frequency or PWM mode
                 );
-  const uint32_t kTicks = VARIANT_GCLK1_FREQ/1024;
+  const uint32_t kTicks = VARIANT_GCLK2_FREQ/1000; ///1024;
   zt3.setPeriodMatch(kTicks - 1, kTicks/4);      // channel 1 only, 200/1000 count
   if (! zt3.PWMout(true, 1, TIMER3_OUT1)) {
     Serial.println("Failed to configure PWM output");
@@ -706,6 +717,20 @@ if(hasRx >= 0)
          if(gState == kSampling)
             sendFirstSampleTimeIfNeeded();
          break;
+      case 'd':
+         {
+         int fineFreq = OSCCTRL->DFLLVAL.bit.FINE;
+         OSCCTRL->DFLLVAL.bit.FINE = --fineFreq;
+         Serial.println("DFLL fine ="+String(fineFreq));
+         break;
+         }
+      case 'i':
+         {
+         int fineFreq = OSCCTRL->DFLLVAL.bit.FINE;
+         OSCCTRL->DFLLVAL.bit.FINE = ++fineFreq;
+         Serial.println("DFLL fine ="+String(fineFreq));
+         break;
+         }
       case 's':   //stop sampling
          StopSampling();
          break;
