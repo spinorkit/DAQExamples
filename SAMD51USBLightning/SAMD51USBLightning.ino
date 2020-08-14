@@ -1,11 +1,12 @@
 #include "src/Adafruit_ZeroTimer.h"
 
-#define TIMER_OUTPUT_FOR_TEST 1
+#define PHASE_LOCK_TO_USB_SOF 1
+//#define TIMER_OUTPUT_FOR_TEST 1
 
 Adafruit_ZeroTimer adcTimer(4);
 
 #ifdef TIMER_OUTPUT_FOR_TEST
-Adafruit_ZeroTimer zt3(3, GCLK_PCHCTRL_GEN_GCLK2_Val); //Testing
+Adafruit_ZeroTimer zt3(3, GCLK_PCHCTRL_GEN_GCLK2_Val); //Testing with GCLK2 set to 48MHz not 100 MHz
 #endif
 
 /* Valid PWM outs (for Adafruit Feather ):
@@ -352,9 +353,9 @@ volatile bool gADCstate = false;
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
 
-const int kLeadGain = 1024;
+const int kLeadGain = 512+128;
 const int kLagGain = 1;
-const int kOneOverGain = 1024*1024;
+const int kOneOverGain = 1024*256;
 
 extern "C" void UDD_Handler(void);
 
@@ -396,8 +397,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
       else if(deltaTicks < -kHighSpeedTimerTicksPerUSBFrame/2)
          deltaTicks += kHighSpeedTimerTicksPerUSBFrame;
 
-
-         sPSDFreqAccum += kLeadGain*deltaTicks; //Lead (1st order) feedback, since we are integrating deltaTicks, and deltaTicks is the derivative of the phase
+      sPSDFreqAccum += kLeadGain*deltaTicks; //Lead (1st order) feedback, since we are integrating deltaTicks, and deltaTicks is the derivative of the phase
 
       int phase = frameus;
          //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
@@ -413,8 +413,9 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
 
       int32_t newDCOControlVal = 128 - sPSDFreqAccum/kOneOverGain;
 
-      //OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
-
+      #ifdef PHASE_LOCK_TO_USB_SOF
+      OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+      #endif
       }
    gPrevFrameus = frameus;
 
