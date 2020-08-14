@@ -347,6 +347,7 @@ volatile bool gADCstate = false;
 /**
  * Measured one fine step (133 to 134) to give a frequency offset of 5 parts in 10000
  * with the SAMD51.
+ * Measured one coarse step to equal 12 fine steps. It was intially 29 out of 64 steps total.
 */
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
@@ -717,6 +718,20 @@ if(hasRx >= 0)
          if(gState == kSampling)
             sendFirstSampleTimeIfNeeded();
          break;
+      case 'D':
+         {
+         int coarseFreq = OSCCTRL->DFLLVAL.bit.COARSE;
+         OSCCTRL->DFLLVAL.bit.COARSE = --coarseFreq;
+         Serial.println("DFLL coarse ="+String(coarseFreq));
+         break;
+         }
+      case 'I':
+         {
+         int coarseFreq = OSCCTRL->DFLLVAL.bit.COARSE;
+         OSCCTRL->DFLLVAL.bit.COARSE = ++coarseFreq;
+         Serial.println("DFLL coarse ="+String(coarseFreq));
+         break;
+         }
       case 'd':
          {
          int fineFreq = OSCCTRL->DFLLVAL.bit.FINE;
