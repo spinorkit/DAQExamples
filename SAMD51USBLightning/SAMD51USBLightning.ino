@@ -367,9 +367,9 @@ volatile bool gADCstate = false;
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
 
-const int kLeadGain = 512+128;
+const int kLeadGain = 512/4; //(512+128)/2;
 const int kLagGain = 1;
-const int kOneOverGain = 1024*256;
+const int kOneOverGain = 1024*256/8;
 
 extern "C" void UDD_Handler(void);
 
