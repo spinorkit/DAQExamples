@@ -144,7 +144,7 @@ EVSYS->Channel[0].CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |            
                      EVSYS_CHANNEL_PATH_ASYNCHRONOUS |                  // Set event path as asynchronous
                      EVSYS_CHANNEL_EVGEN(EVSYS_ID_GEN_TC4_MCX_0);        // Set event generator (sender) as TC4 Match/Capture 0
 
-adcTimer.enable(true);
+//adcTimer.enable(true);
 }
 
 void adc_setup()
@@ -348,6 +348,7 @@ volatile int32_t gFirstADCPointus = 0;
 enum State
 {
 kIdle,
+kWaitingForUSBSOF,
 kStartingSampling,
 kHadFirstSample,
 kSampling,  
@@ -396,6 +397,11 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
    digitalWrite(1, gUSBBPinState = !gUSBBPinState );  
    //int32_t SOFtickus = micros();
    int32_t frameus = ((SysTick->LOAD  - SysTick->VAL)*(1024*1024/(VARIANT_MCK/1000000)))>>20;
+   if(gState == kWaitingForUSBSOF)
+      {
+      adcTimer.enable(true);   
+      gState = kStartingSampling;
+      }
    //frameus in range [0, 1000)
    //usbd.frameNumber();  
    sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM; 
@@ -665,7 +671,7 @@ startADCTimer(gADCPointsPerSec);
 
 //digitalWrite(12, LOW); //Clear Buffer overflow
 //Packet::ResetPacketCount();
-gState = kStartingSampling;
+gState = kWaitingForUSBSOF;
 
 digitalWrite(LED_BUILTIN, HIGH);
 }
