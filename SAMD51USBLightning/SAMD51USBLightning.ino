@@ -70,6 +70,19 @@ void debugNewLine()
 //Serial.write('\n'); //Readability while testing only!
 }
 
+inline uint32_t saveIRQState(void)
+{
+  uint32_t pmask = __get_PRIMASK() & 1;
+  __set_PRIMASK(1);
+  return pmask;
+}
+
+
+inline void restoreIRQState(uint32_t pmask)
+{
+__set_PRIMASK(pmask);
+}
+
 
 inline void syncADC0_ENABLE() 
 {
@@ -427,10 +440,11 @@ UDD_Handler();
 
 void setup() 
 {
-
+auto irqState = saveIRQState();
 USB_SetHandler(&USBHandlerHook);
+restoreIRQState(irqState);
 
-Serial.begin (0);
+Serial.begin (0); //baud rate is ignored
 while(!Serial);
 
 pinMode(1, OUTPUT); //Test only - toggles on eachUSB SOF
