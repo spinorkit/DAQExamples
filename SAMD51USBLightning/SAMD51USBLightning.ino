@@ -46,12 +46,12 @@ FOR SAMD51:
 #ifdef TIMING_CHECK
 const int kDefaultADCPointsPerSec = 1;//1024;//100; //~5000 max with 2 samples (1 point) per packet
 #else
-const int kDefaultADCPointsPerSec = 1000; //~5000 max with 2 samples (1 point) per packet
+const int kDefaultADCPointsPerSec = 100; //~5000 max with 2 samples (1 point) per packet
 #endif
 
 int gADCPointsPerSec = kDefaultADCPointsPerSec; //~5000 max with 2 samples (1 point) per packet
 
-const int kSampleRates[] = {4000, 2000, 1000, 400, 200, 100};
+const int kSampleRates[] = {10000, 4000, 2000, 1000, 400, 200, 100};
 const int kNSampleRates = sizeof(kSampleRates)/sizeof(int);
 
 const int kADCStartChan = 2; //A1
