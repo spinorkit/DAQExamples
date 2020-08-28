@@ -411,7 +411,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
          phase -= kHighSpeedTimerTicksPerUSBFrame;
 
 
-      int32_t filterOut = (kFixedPointScaling*phase + sPSDPhaseAccum )/kFixedPointScaling; //(sPSDFreqAccum < 0 ? -(-sPSDFreqAccum+4095)/8192 : (sPSDFreqAccum+4095)/8192);
+      int32_t filterOut = (kFixedPointScaling*phase/2 + sPSDPhaseAccum )/kFixedPointScaling; //(sPSDFreqAccum < 0 ? -(-sPSDFreqAccum+4095)/8192 : (sPSDFreqAccum+4095)/8192);
       //filterOut = filterOut < 0 ? -(-filterOut + kFixedPointScaling/2)/kFixedPointScaling : (filterOut + kFixedPointScaling/2)/kFixedPointScaling;
       sPSDPhaseAccum += phase; //integrate the phase to get lag (2nd order) feedback
 
