@@ -377,6 +377,8 @@ volatile int sLastFrameNumber = 0;
 volatile int32_t sPSDFreqAccum = 0;
 volatile int32_t gPrevFrameus = -1;
 
+volatile int gLastDCOControlVal = 0;
+
 volatile bool gUSBBPinState = false;
 
 const int kHighSpeedTimerTicksPerUSBFrame = 1000;
@@ -431,6 +433,8 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
          sPSDFreqAccum = kOneOverGain*kDFLLFineMin;
 
       int32_t newDCOControlVal = 128 - sPSDFreqAccum/kOneOverGain;
+
+      gLastDCOControlVal = newDCOControlVal;
 
       #ifdef PHASE_LOCK_TO_USB_SOF
       OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
@@ -493,6 +497,8 @@ volatile int32_t gLastADCus = 0;
 int32_t gLastLastADCus = 0;
 #endif
 
+volatile int gLastBit = 0;
+
 void ADC0_1_Handler()
 {
 #ifdef TIMING_CHECK
@@ -505,6 +511,22 @@ int val = ADC0->RESULT.reg;
 syncADC0_INPUTCTRL();
 int chan = ADC0->INPUTCTRL.bit.MUXPOS;
 
+if(chan - kADCStartChan == 0)
+   {
+   //val = gLastBit;
+   //gLastBit = 1-gLastBit;
+   val = gPrevFrameus;
+   if(val >= kHighSpeedTimerTicksPerUSBFrame/2)              
+      val -= kHighSpeedTimerTicksPerUSBFrame;
+   }
+else
+   {
+   val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
+   }
+   val += 2048; 
+
+
+//Testing!!
 if(!gSampleBuffers[chan-kADCStartChan].Push(val))
    digitalWrite(LED_BUILTIN, LOW); //Turn off LED to indicate overflow
 
