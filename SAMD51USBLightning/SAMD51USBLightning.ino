@@ -57,14 +57,14 @@ const int kNSampleRates = sizeof(kSampleRates)/sizeof(int);
 const int kADCStartChan = 2; //A1
 
 #ifdef TIMING_CHECK
-const int kADCChannels = 1;//2; 
+const int kADCChannels = 1;//2;
 #else
-const int kADCChannels = 2; 
+const int kADCChannels = 2;
 #endif
 
 const int kADCEndChan = kADCStartChan + kADCChannels;
 
- 
+
 void debugNewLine()
 {
 //Serial.write('\n'); //Readability while testing only!
@@ -84,32 +84,32 @@ __set_PRIMASK(pmask);
 }
 
 
-inline void syncADC0_ENABLE() 
+inline void syncADC0_ENABLE()
 {
   while (ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_ENABLE);
 }
 
-inline void syncADC0_CTRLB() 
+inline void syncADC0_CTRLB()
 {
   while (ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_CTRLB);
 }
 
-inline void syncADC0_SAMPCTRL() 
+inline void syncADC0_SAMPCTRL()
 {
   while (ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_SAMPCTRL);
 }
 
-inline void syncADC0_INPUTCTRL() 
+inline void syncADC0_INPUTCTRL()
 {
   while (ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_INPUTCTRL);
 }
 
-inline void syncADC0_SWTRIG() 
+inline void syncADC0_SWTRIG()
 {
   while (ADC0->SYNCBUSY.reg & ADC_SYNCBUSY_SWTRIG);
 }
 
-void startADCTimer(uint32_t frequency) 
+void startADCTimer(uint32_t frequency)
 {
 /********************* Timer #4 + #5, 32 bit, one PWM out */
 adcTimer.configure(TC_CLOCK_PRESCALER_DIV1, // prescaler
@@ -138,7 +138,7 @@ EVSYS->USER[EVSYS_ID_USER_ADC0_START].reg = EVSYS_USER_CHANNEL(1);         // Se
 // EVSYS->CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |               // No event edge detection
 //                      EVSYS_CHANNEL_PATH_ASYNCHRONOUS |                  // Set event path as asynchronous
 //                      EVSYS_CHANNEL_EVGEN(EVSYS_ID_GEN_TC4_MCX_0) |      // Set event generator (sender) as TC4 Match/Capture 0
-//                      EVSYS_CHANNEL_CHANNEL(0);                          // Attach the generator (sender) to channel 0                                 
+//                      EVSYS_CHANNEL_CHANNEL(0);                          // Attach the generator (sender) to channel 0
 
 EVSYS->Channel[0].CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |               // No event edge detection
                      EVSYS_CHANNEL_PATH_ASYNCHRONOUS |                  // Set event path as asynchronous
@@ -166,7 +166,7 @@ void adc_setup()
 // EVSYS->CHANNEL.reg = EVSYS_CHANNEL_EDGSEL_NO_EVT_OUTPUT |               // No event edge detection
 //                      EVSYS_CHANNEL_PATH_ASYNCHRONOUS |                  // Set event path as asynchronous
 //                      EVSYS_CHANNEL_EVGEN(EVSYS_ID_GEN_TC4_MCX_0) |      // Set event generator (sender) as TC4 Match/Capture 0
-//                      EVSYS_CHANNEL_CHANNEL(0);                          // Attach the generator (sender) to channel 0                                 
+//                      EVSYS_CHANNEL_CHANNEL(0);                          // Attach the generator (sender) to channel 0
 
 //Setup ADC
 
@@ -351,7 +351,7 @@ kIdle,
 kWaitingForUSBSOF,
 kStartingSampling,
 kHadFirstSample,
-kSampling,  
+kSampling,
 };
 
 volatile State gState = kIdle;
@@ -367,14 +367,16 @@ volatile bool gADCstate = false;
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
 
-const int kLeadGain = 512/4; //(512+128)/2;
-const int kLagGain = 1;
-const int kOneOverGain = 1024*256/8;
+// const int kLeadGain = 512/4; //(512+128)/2;
+// const int kLagGain = 1;
+// const int kOneOverGain = 1024*256/8;
+
+const int kFixedPointScaling = 8192;
 
 extern "C" void UDD_Handler(void);
 
 volatile int sLastFrameNumber = 0;
-volatile int32_t sPSDFreqAccum = 0;
+volatile int32_t sPSDPhaseAccum = 0;
 volatile int32_t gPrevFrameus = -1;
 
 volatile int gLastDCOControlVal = 0;
@@ -383,56 +385,42 @@ volatile bool gUSBBPinState = false;
 
 const int kHighSpeedTimerTicksPerUSBFrame = 1000;
 
-extern "C" 
+extern "C"
 {
-
-// inline setDFLLFine(int8_t fine)
-// {
-
-// }
 
 void USBHandlerHook(void)
 {
-if(USB->DEVICE.INTFLAG.bit.SOF)
-// if(usbd.isStartOfFrameInterrupt())
+if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    {
-   digitalWrite(1, gUSBBPinState = !gUSBBPinState );  
+   digitalWrite(1, gUSBBPinState = !gUSBBPinState );
    //int32_t SOFtickus = micros();
    int32_t frameus = ((SysTick->LOAD  - SysTick->VAL)*(1024*1024/(VARIANT_MCK/1000000)))>>20;
    if(gState == kWaitingForUSBSOF)
       {
-      adcTimer.enable(true);   
+      adcTimer.enable(true);
       gState = kStartingSampling;
       }
    //frameus in range [0, 1000)
-   //usbd.frameNumber();  
-   sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM; 
-   if(gPrevFrameus >= 0)
+   //usbd.frameNumber();
+   sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM;
+   //if(gPrevFrameus >= 0)
       {
-      int32_t deltaTicks = frameus - gPrevFrameus;
-      //frameHSTick ranges [0, kHighSpeedTimerTicksPerUSBFrame) so deltaTicks jumps around between roughly -1, 0 and kHighSpeedTimerTicksPerUSBFrame-1.
-
-      //These tests wrap the numbers like kHighSpeedTimerTicksPerUSBFrame-1 to e.g. 1.
-      if(deltaTicks > kHighSpeedTimerTicksPerUSBFrame/2)
-         deltaTicks -= kHighSpeedTimerTicksPerUSBFrame;
-      else if(deltaTicks < -kHighSpeedTimerTicksPerUSBFrame/2)
-         deltaTicks += kHighSpeedTimerTicksPerUSBFrame;
-
-      sPSDFreqAccum += kLeadGain*deltaTicks; //Lead (1st order) feedback, since we are integrating deltaTicks, and deltaTicks is the derivative of the phase
-
       int phase = frameus;
          //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
-      if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)              
+      if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
          phase -= kHighSpeedTimerTicksPerUSBFrame;
 
-      sPSDFreqAccum += phase; //integrate the phase to get lag (2nd order) feedback
-      
-      if(sPSDFreqAccum > kOneOverGain*kDFLLFineMax)
-         sPSDFreqAccum = kOneOverGain*kDFLLFineMax;
-      else if(sPSDFreqAccum < kOneOverGain*kDFLLFineMin)   
-         sPSDFreqAccum = kOneOverGain*kDFLLFineMin;
 
-      int32_t newDCOControlVal = 128 - sPSDFreqAccum/kOneOverGain;
+      int32_t filterOut = (kFixedPointScaling*phase + sPSDPhaseAccum )/kFixedPointScaling; //(sPSDFreqAccum < 0 ? -(-sPSDFreqAccum+4095)/8192 : (sPSDFreqAccum+4095)/8192);
+      //filterOut = filterOut < 0 ? -(-filterOut + kFixedPointScaling/2)/kFixedPointScaling : (filterOut + kFixedPointScaling/2)/kFixedPointScaling;
+      sPSDPhaseAccum += phase; //integrate the phase to get lag (2nd order) feedback
+
+      if(filterOut > kDFLLFineMax)
+         filterOut = kDFLLFineMax;
+      else if(filterOut < kDFLLFineMin)
+         filterOut = kDFLLFineMin;
+
+      int32_t newDCOControlVal = kDFLLFineMax - filterOut;
 
       gLastDCOControlVal = newDCOControlVal;
 
@@ -443,12 +431,12 @@ if(USB->DEVICE.INTFLAG.bit.SOF)
    gPrevFrameus = frameus;
 
    }
-UDD_Handler();   
+UDD_Handler();
 }
 
 }
 
-void setup() 
+void setup()
 {
 auto irqState = saveIRQState();
 USB_SetHandler(&USBHandlerHook);
@@ -460,7 +448,7 @@ while(!Serial);
 pinMode(1, OUTPUT); //Test only - toggles on eachUSB SOF
 pinMode(6, OUTPUT); //Test only - toggles on each ADC_Handler()
 pinMode(LED_BUILTIN, OUTPUT);
-digitalWrite(LED_BUILTIN, LOW); 
+digitalWrite(LED_BUILTIN, LOW);
 
 #ifdef TIMER_OUTPUT_FOR_TEST
   /********************* Timer #3, 16 bit, one PWM out, period = 1024 */
@@ -504,7 +492,7 @@ void ADC0_1_Handler()
 #ifdef TIMING_CHECK
 gLastADCus = micros();
 #endif
-digitalWrite(6, gADCstate = !gADCstate );  
+digitalWrite(6, gADCstate = !gADCstate );
 
 int val = ADC0->RESULT.reg;
 
@@ -516,14 +504,14 @@ if(chan - kADCStartChan == 0)
    //val = gLastBit;
    //gLastBit = 1-gLastBit;
    val = gPrevFrameus;
-   if(val >= kHighSpeedTimerTicksPerUSBFrame/2)              
+   if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
       val -= kHighSpeedTimerTicksPerUSBFrame;
    }
 else
    {
    val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
    }
-   val += 2048; 
+   val += 2048;
 
 
 //Testing!!
@@ -533,14 +521,14 @@ if(!gSampleBuffers[chan-kADCStartChan].Push(val))
 if(chan == kADCStartChan && gState == kStartingSampling)
    {
    gFirstADCPointus = micros();
-   gState = kHadFirstSample;   
+   gState = kHadFirstSample;
    }
 
 if(++chan < kADCEndChan)
    {
-   ADC0->INPUTCTRL.bit.MUXPOS = chan;  
-   syncADC0_INPUTCTRL();  
-     
+   ADC0->INPUTCTRL.bit.MUXPOS = chan;
+   syncADC0_INPUTCTRL();
+
    ADC0->SWTRIG.bit.START = 1;
    syncADC0_SWTRIG();
    }
@@ -550,13 +538,13 @@ else
    syncADC0_INPUTCTRL();
    }
 
-//digitalWrite(6, gADCstate = !gADCstate );  
+//digitalWrite(6, gADCstate = !gADCstate );
 }
 
 class PacketBase
 {
 protected:
-   static uint8_t sPacketCount;  
+   static uint8_t sPacketCount;
 };
 
 uint8_t PacketBase::sPacketCount = 0;
@@ -567,15 +555,15 @@ class Packet : protected PacketBase
    //The header is 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
    //3rd byte is the packet time (0x04) for data packets.
    //The head and packet type is followed by a 1 byte packet count number,
-   //making a total of 4 bytes before the payload daya that need to match the 
+   //making a total of 4 bytes before the payload daya that need to match the
    //expected pattern(s) before the client can detect a packet.
-   const char sHeader[2] = {'P',0xA0}; 
+   const char sHeader[2] = {'P',0xA0};
 
 public:
 
    static void ResetPacketCount()
       {
-      sPacketCount = 0;   
+      sPacketCount = 0;
       }
 
    Packet() : mPoint(0)
@@ -597,7 +585,7 @@ public:
 
    void nextPoint()
       {
-      ++mPoint;   
+      ++mPoint;
       }
 
    //returns number of bytes written
@@ -708,7 +696,7 @@ for(int chan(0); chan<kADCChannels;++chan)
    auto buffer = gSampleBuffers[chan];
    buffer.Clear();
    }
-digitalWrite(LED_BUILTIN, LOW);   
+digitalWrite(LED_BUILTIN, LOW);
 }
 
 
@@ -804,7 +792,7 @@ if(hasRx >= 0)
 
          //digitalWrite(5, LOW);
 
-         break;   
+         break;
          }
       case 'v':   //version info
          Serial.print("ArduinoRT Example V0.9.0 Channels: "+String(kADCChannels)+" $$$");
@@ -824,7 +812,7 @@ if(hasRx >= 0)
             gADCPointsPerPacket = kPointsPerMediumSizePacket;
          else
             gADCPointsPerPacket = kPointsPerPacket;
-            
+
          break;
          }
       default:
@@ -862,9 +850,9 @@ while(points >= gADCPointsPerPacket)
          auto &buffer = gSampleBuffers[chan];
          packet.addSample(chan, buffer.GetNext());
          }
-      packet.nextPoint();   
+      packet.nextPoint();
       }
-   
+
    //digitalWrite(7, HIGH);
    packet.write(Serial);
    //digitalWrite(7, LOW);
