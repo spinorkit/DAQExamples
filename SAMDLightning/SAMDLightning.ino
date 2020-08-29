@@ -551,7 +551,7 @@ if(hasRx >= 0)
          break;   
          }
       case 'v':   //version info
-         Serial.write("ArduinoRT Example V0.9.0 $$$");
+         Serial.print("ArduinoRT Example V0.9.0 Channels: "+String(kADCChannels)+" $$$");
          Packet::ResetPacketCount(); //new session
 
          #ifdef ENABLE_SERIAL_DEBUGGING
