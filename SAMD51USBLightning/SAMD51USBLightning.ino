@@ -443,6 +443,15 @@ UDD_Handler();
 void setup()
 {
 auto irqState = saveIRQState();
+
+//Open loop mode
+#if defined(__SAMD51__)
+OSCCTRL->DFLLCTRLB.reg &= ~OSCCTRL_DFLLCTRLB_MODE;
+#else
+//SAMD21
+SYSCTRL->DFLLCTRL.reg &= ~SYSCTRL_DFLLCTRL_MODE
+#endif
+
 USB_SetHandler(&USBHandlerHook);
 restoreIRQState(irqState);
 
