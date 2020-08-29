@@ -3,6 +3,7 @@
 #define PHASE_LOCK_TO_USB_SOF 1
 //#define TIMER_OUTPUT_FOR_TEST 1
 #define OUTPUT_USB_SOF_PLL_SIGNALS 1
+#define ENABLE_DCO_TEST_COMMANDS 1
 
 
 Adafruit_ZeroTimer adcTimer(4);
@@ -769,6 +770,8 @@ if(hasRx >= 0)
          if(gState == kSampling)
             sendFirstSampleTimeIfNeeded();
          break;
+
+      #ifdef ENABLE_DCO_TEST_COMMANDS
       case 'D':
          {
          int coarseFreq = OSCCTRL->DFLLVAL.bit.COARSE;
@@ -797,6 +800,8 @@ if(hasRx >= 0)
          Serial.println("DFLL fine ="+String(fineFreq));
          break;
          }
+      #endif
+      
       case 's':   //stop sampling
          StopSampling();
          break;
