@@ -400,7 +400,6 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    gPrevFrameTick = frameTick;
 
    }
-   #endif
 UDD_Handler();
 }
 
@@ -411,14 +410,12 @@ void setup()
 {
 auto irqState = saveIRQState();
 
-//Open loop mode
+//Turn off frequency locking closed loop mode
 #if defined(__SAMD51__)
 OSCCTRL->DFLLCTRLB.reg &= ~OSCCTRL_DFLLCTRLB_MODE;
 #else
 //SAMD21
-SYSCTRL->DFLLCTRL.reg |= SYSCTRL_DFLLCTRL_USBCRM | SYSCTRL_DFLLCTRL_CCDIS;
 SYSCTRL->DFLLCTRL.reg &= ~SYSCTRL_DFLLCTRL_MODE;
-SYSCTRL->DFLLVAL.reg = SYSCTRL->DFLLVAL.reg;
 #endif
 
 USB_SetHandler(&USBHandlerHook);
