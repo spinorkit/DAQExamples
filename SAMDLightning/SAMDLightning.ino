@@ -1,5 +1,8 @@
 #include "src/Adafruit_ZeroTimer.h"
 
+#define PHASE_LOCK_TO_USB_SOF 1
+#define OUTPUT_USB_SOF_PLL_SIGNALS 1
+
 Adafruit_ZeroTimer adcTimer(4);
 
 
@@ -54,6 +57,19 @@ void debugNewLine()
 //Serial.write('\n'); //Readability while testing only!
 }
 
+inline uint32_t saveIRQState(void)
+{
+  uint32_t pmask = __get_PRIMASK() & 1;
+  __set_PRIMASK(1);
+  return pmask;
+}
+
+
+inline void restoreIRQState(uint32_t pmask)
+{
+__set_PRIMASK(pmask);
+}
+
 
 inline void syncADC() 
 {
@@ -79,7 +95,7 @@ if (! adcTimer.PWMout(true, 0, TIMER4_OUT0)) {
 TC4->COUNT32.EVCTRL.reg |= TC_EVCTRL_MCEO0;
 while (TC4->COUNT32.STATUS.bit.SYNCBUSY);                // Wait for synchronization
 
-adcTimer.enable(true);
+//adcTimer.enable(true);
 }
 
 void adc_setup()
@@ -266,6 +282,9 @@ const int kLog2BufferPoints = 11;
 const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
 
 const int kPointsPerPacket = 1;
+const int kPointsPerMediumSizePacket = 10;
+
+int gADCPointsPerPacket = kPointsPerPacket;
 
 const int kLog2BufferSizeBytes = 15;
 const int kLog2ADCChannels = 1;
@@ -283,6 +302,7 @@ volatile int32_t gFirstADCPointus = 0;
 enum State
 {
 kIdle,
+kWaitingForUSBSOF,
 kStartingSampling,
 kHadFirstSample,
 kSampling,  
@@ -293,8 +313,117 @@ volatile bool gFirstSampleTimeRequested = false;
 
 volatile bool gADCstate = false;
 
+
+/**
+ * Measured one fine step (133 to 134) to give a frequency offset of 5 parts in 10000
+ * with the SAMD51.
+ * Measured one coarse step to equal 12 fine steps. It was intially 29 out of 64 steps total.
+*/
+#if defined(__SAMD51__)
+const int kDFLLFineMax = 127;
+const int kDFLLFineMin = -128;
+#else
+const int kDFLLFineMax = 511;
+const int kDFLLFineMin = -512;
+#endif
+
+// const int kLeadGain = 512/4; //(512+128)/2;
+// const int kLagGain = 1;
+// const int kOneOverGain = 1024*256/8;
+
+
+extern "C" void UDD_Handler(void);
+
+volatile int sLastFrameNumber = 0;
+volatile int32_t sPSDPhaseAccum = 0;
+volatile int32_t gPrevFrameTick = -1;
+
+volatile int gLastDCOControlVal = 0;
+
+volatile bool gUSBBPinState = false;
+
+const int kHighSpeedTimerTicksPerus = 4;
+const int kHighSpeedTimerTicksPerUSBFrame = 1000*kHighSpeedTimerTicksPerus;
+
+const int kOneOverLeadGainus = 1;
+const int kOneOverLagGainus = 8192;
+const int kFixedPointScaling = kOneOverLagGainus*kHighSpeedTimerTicksPerus;
+
+
+extern "C"
+{
+
+void USBHandlerHook(void)
+{
+if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
+   {
+   digitalWrite(1, gUSBBPinState = !gUSBBPinState );
+   //int32_t SOFtickus = micros();
+   int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
+   if(gState == kWaitingForUSBSOF)
+      {
+      adcTimer.enable(true);
+      gState = kStartingSampling;
+      }
+   //frameus in range [0, 1000)
+   //usbd.frameNumber();
+   sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM;
+   //if(gPrevFrameTick >= 0)
+      {
+      int phase = frameTick;
+         //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
+      if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
+         phase -= kHighSpeedTimerTicksPerUSBFrame;
+
+
+      int32_t filterOut = (phase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + sPSDPhaseAccum)/kFixedPointScaling;
+      sPSDPhaseAccum += phase; //integrate the phase to get lag (2nd order) feedback
+
+      if(filterOut > kDFLLFineMax)
+         filterOut = kDFLLFineMax;
+      else if(filterOut < kDFLLFineMin)
+         filterOut = kDFLLFineMin;
+
+      int32_t newDCOControlVal = kDFLLFineMax - filterOut;
+
+      gLastDCOControlVal = newDCOControlVal;
+
+      #ifdef PHASE_LOCK_TO_USB_SOF
+      #if defined(__SAMD51__)
+      OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+      #else
+      //SAMD21
+      SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
+      #endif
+      #endif
+      }
+   gPrevFrameTick = frameTick;
+
+   }
+   #endif
+UDD_Handler();
+}
+
+}
+
+
 void setup() 
 {
+auto irqState = saveIRQState();
+
+//Open loop mode
+#if defined(__SAMD51__)
+OSCCTRL->DFLLCTRLB.reg &= ~OSCCTRL_DFLLCTRLB_MODE;
+#else
+//SAMD21
+SYSCTRL->DFLLCTRL.reg |= SYSCTRL_DFLLCTRL_USBCRM | SYSCTRL_DFLLCTRL_CCDIS;
+SYSCTRL->DFLLCTRL.reg &= ~SYSCTRL_DFLLCTRL_MODE;
+SYSCTRL->DFLLVAL.reg = SYSCTRL->DFLLVAL.reg;
+#endif
+
+USB_SetHandler(&USBHandlerHook);
+restoreIRQState(irqState);
+
 Serial.begin (0);
 while(!Serial);
 
@@ -316,6 +445,23 @@ int val = ADC->RESULT.reg;
 syncADC();
 int chan = ADC->INPUTCTRL.bit.MUXPOS;
 syncADC();
+
+#ifdef OUTPUT_USB_SOF_PLL_SIGNALS
+if(chan - kADCStartChan == 0)
+   {
+   //val = gLastBit;
+   //gLastBit = 1-gLastBit;
+   val = gPrevFrameTick;
+   if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
+      val -= kHighSpeedTimerTicksPerUSBFrame;
+   }
+else
+   {
+   val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
+   }
+val += 2048;
+#endif
+
 
 if(!gSampleBuffers[chan-kADCStartChan].Push(val))
    digitalWrite(LED_BUILTIN, LOW); //Turn off LED to indicate overflow
@@ -339,24 +485,33 @@ else
    }
 
 syncADC();
-digitalWrite(6, gADCstate = !gADCstate );  
+//digitalWrite(6, gADCstate = !gADCstate );  
 }
 
 
-class Packet
+class PacketBase
+{
+protected:
+   static uint8_t sPacketCount;
+};
+
+uint8_t PacketBase::sPacketCount = 0;
+
+
+class Packet : protected PacketBase
 {
    //The header is 5 nibbles, i.e. "P\xA0\x40". The low nibble of the
    //3rd byte is the packet time (0x04) for data packets.
    //The head and packet type is followed by a 1 byte packet count number,
-   //making a total of 4 bytes before the payload daya that need to match the 
+   //making a total of 4 bytes before the payload daya that need to match the
    //expected pattern(s) before the client can detect a packet.
-   const char sHeaderAndPacketType[3] = {'P',0xA0,'D'}; //D for data
+   const char sHeader[2] = {'P',0xA0};
 
 public:
 
    static void ResetPacketCount()
       {
-      sPacketCount = 0;   
+      sPacketCount = 0;
       }
 
    Packet() : mPoint(0)
@@ -365,7 +520,7 @@ public:
 
    bool addSample(int chan, int16_t sample)
       {
-      if(mPoint >= kPointsPerPacket)
+      if(mPoint >= gADCPointsPerPacket)
          return false;
 //Testing!!
 //if(chan == 0)
@@ -378,32 +533,31 @@ public:
 
    void nextPoint()
       {
-      ++mPoint;   
+      ++mPoint;
       }
 
    //returns number of bytes written
    int write(Stream &stream) const
       {
-      int n = stream.write(sHeaderAndPacketType, 3);
+      int n = stream.write(sHeader, 2);
+      //Write the packet type byte (D for data, M for medium sized data packet)
+      n += stream.write(uint8_t(gADCPointsPerPacket==1?'D':'M'));
       n += stream.write(sPacketCount++);
-      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(int16_t)*kADCChannels*gADCPointsPerPacket);
       return n;
       }
 
 
 protected:
 
-   static uint8_t sPacketCount;  
-
    int mPoint;
-   int16_t mData[kPointsPerPacket][kADCChannels];
+   int16_t mData[kPointsPerMediumSizePacket][kADCChannels];
 
 };
 
-uint8_t Packet::sPacketCount = 0;   
 
 
-class TimePacket : protected Packet
+class TimePacket : protected PacketBase
 {
    const char sHeaderAndPacketType[3] = {'P',0xA0,'N'}; //'N' for now
 
@@ -430,7 +584,7 @@ protected:
    uint8_t mTimeRequestNumber;
 };
 
-class FirstSampleTimePacket : protected Packet
+class FirstSampleTimePacket : protected PacketBase
 {
    const char sHeaderAndPacketType[3] = {'P',0xA0,'F'}; //'F' for First sample time
 
@@ -474,7 +628,7 @@ for(int chan(0); chan<kADCChannels;++chan)
 
 //digitalWrite(12, LOW); //Clear Buffer overflow
 //Packet::ResetPacketCount();
-gState = kStartingSampling;
+gState = kWaitingForUSBSOF;
 
 digitalWrite(LED_BUILTIN, HIGH);
 }
@@ -533,6 +687,35 @@ if(hasRx >= 0)
          if(gState == kSampling)
             sendFirstSampleTimeIfNeeded();
          break;
+      case 'D':
+         {
+         int coarseFreq = SYSCTRL->DFLLVAL.bit.COARSE;
+         SYSCTRL->DFLLVAL.bit.COARSE = --coarseFreq;
+         Serial.println("DFLL coarse ="+String(coarseFreq));
+         break;
+         }
+      case 'I':
+         {
+         int coarseFreq = SYSCTRL->DFLLVAL.bit.COARSE;
+         SYSCTRL->DFLLVAL.bit.COARSE = ++coarseFreq;
+         Serial.println("DFLL coarse ="+String(coarseFreq));
+         break;
+         }
+      case 'd':
+         {
+         int fineFreq = SYSCTRL->DFLLVAL.bit.FINE;
+         SYSCTRL->DFLLVAL.bit.FINE = --fineFreq;
+         Serial.println("DFLL fine ="+String(fineFreq));
+         break;
+         }
+      case 'i':
+         {
+         int fineFreq = SYSCTRL->DFLLVAL.bit.FINE;
+         SYSCTRL->DFLLVAL.bit.FINE = ++fineFreq;
+         Serial.println("DFLL fine ="+String(fineFreq));
+         break;
+         }
+
       case 's':   //stop sampling
          StopSampling();
          break;
@@ -564,6 +747,11 @@ if(hasRx >= 0)
          unsigned int index = rateChar - '0';
          if(index < sizeof(kSampleRates)/sizeof(int))
             gADCPointsPerSec = kSampleRates[index];
+         if(gADCPointsPerSec > 100)
+            gADCPointsPerPacket = kPointsPerMediumSizePacket;
+         else
+            gADCPointsPerPacket = kPointsPerPacket;
+
          break;
          }
       default:
@@ -590,20 +778,20 @@ for(int chan(1); chan<kADCChannels;++chan)
    }
 
 
-while(points >= kPointsPerPacket)
+while(points >= gADCPointsPerPacket)
    {
    Packet packet;
 
-   for(int pt(0);pt<kPointsPerPacket;++pt)
+   for(int pt(0);pt<gADCPointsPerPacket;++pt)
       {
       for(int chan(0); chan<kADCChannels;++chan)
          {
          auto &buffer = gSampleBuffers[chan];
          packet.addSample(chan, buffer.GetNext());
          }
-      packet.nextPoint();   
+      packet.nextPoint();
       }
-   
+
    //digitalWrite(7, HIGH);
    packet.write(Serial);
    //digitalWrite(7, LOW);
