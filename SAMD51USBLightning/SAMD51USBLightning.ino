@@ -200,15 +200,11 @@ syncADC0_ENABLE();
 NVIC_EnableIRQ(ADC0_1_IRQn);
 }
 
-template <class T, unsigned int Log2Size>
+template <class T, int Size>
 class RingBufferSized
    {
    public:
-      enum
-      {
-      kBufSize = 1<<Log2Size,
-      kLenMask = kBufSize-1,
-      };
+      typedef int TIndex;
 
    RingBufferSized() : mIn(0),mOut(0)
       {
@@ -219,14 +215,17 @@ class RingBufferSized
       mOut = mIn;
       }
 
-   int GetCount() const
+   TIndex GetCount() const
    {
-   return (mIn-mOut) & kLenMask;
+   TIndex result = mIn-mOut;
+   if(result < 0)
+      result += Size;
+   return result;
    }
 
-   int GetSpace() const
+   TIndex GetSpace() const
    {
-   return kLenMask - GetCount();
+   return (Size - 1) - GetCount();
    }
 
    bool Push(T val)
@@ -234,17 +233,18 @@ class RingBufferSized
       if(GetSpace())
          {
          mBuffer[mIn++] = val;
-         mIn &= kLenMask;
+         if(mIn >= Size)
+            mIn -= Size;
          return true;
          }
       return false;
       }
 
    //Returns num pushed
-   int Push(const T *val, int nToPushIn)
+   int Push(const T *val, TIndex nToPushIn)
       {
-      int nToPushRemain = nToPushIn;
-      int space = GetSpace();
+      TIndex nToPushRemain = nToPushIn;
+      TIndex space = GetSpace();
 
       if(nToPushRemain > space)
          nToPushRemain = space; //limit to available space
@@ -253,18 +253,20 @@ class RingBufferSized
 
       if(nToPushRemain)
          {//There is space
-         int lenToCopy1 = (kBufSize-mIn); //space available before wrapping
+         TIndex lenToCopy1 = (Size-mIn); //space available before wrapping
          if(lenToCopy1 > nToPushRemain)
             lenToCopy1 = nToPushRemain;
          memcpy(mBuffer+mIn,val,lenToCopy1*sizeof(T));
          mIn += lenToCopy1;
-         mIn &= kLenMask;
+         if(mIn >= Size)
+            mIn -= Size;
          nToPushRemain -= lenToCopy1;
          if(nToPushRemain)
             {//still some left to copy, wrap to start of buffer
             memcpy(mBuffer,val+lenToCopy1,nToPushRemain*sizeof(T));
             mIn += nToPushRemain;
-            mIn &= kLenMask;
+            if(mIn >= Size)
+               mIn -= Size;
             }
          }
       return space; //Space is number pushed.
@@ -289,7 +291,8 @@ class RingBufferSized
    const T& GetNext()
       {
       const T& result = mBuffer[mOut++];
-      mOut &= kLenMask;
+      if(mOut >= Size)
+         mOut -= Size;
       return result;
       }
 
@@ -298,7 +301,8 @@ class RingBufferSized
       if(GetCount())
          {
          *val = mBuffer[mOut++];
-         mOut &= kLenMask;
+         if(mOut >= Size)
+            mOut -= Size;
          return true;
          }
       return false;
@@ -309,35 +313,35 @@ class RingBufferSized
       if(GetCount())
          {
          mOut++;
-         mOut &= kLenMask;
+         if(mOut >= Size)
+            mOut -= Size;
          return true;
          }
       return false;
       }
 
    protected:
-   T mBuffer[kBufSize];
-   volatile int mIn;
-   volatile int mOut;
+   T mBuffer[Size];
+   volatile TIndex mIn;
+   volatile TIndex mOut;
    };
+
 
 const int kMaxCommandLenBytes = 64;
 
 const int kBytesPerSample = sizeof(int16_t);
 
-const int kLog2BufferPoints = 13;
-const int kBufferSizeBytes = (1 << kLog2BufferPoints)*kADCChannels*kBytesPerSample;
-
 const int kPointsPerPacket = 1;
 const int kPointsPerMediumSizePacket = 10;
 
-const int kLog2BufferSizeBytes = 15;
-const int kLog2ADCChannels = 1;
-const int kLog2BytesPerSample = 1;
-
 int gADCPointsPerPacket = kPointsPerPacket;
 
-typedef RingBufferSized<int16_t, kLog2BufferPoints> TRingBuf;
+//Statically allocating individual buffers larger than this causes the firmware to crash for some reason
+const int kTotalBufferSpaceBytes = kADCChannels < 2 ? 32000 : 64000; 
+
+const int kBufferPoints = kTotalBufferSpaceBytes/kBytesPerSample/kADCChannels;
+
+typedef RingBufferSized<int16_t, kBufferPoints> TRingBuf;
 
 TRingBuf gSampleBuffers[kADCChannels];
 
