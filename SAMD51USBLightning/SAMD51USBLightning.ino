@@ -371,19 +371,24 @@ const int kDFLLFineMin = -128;
 // const int kLagGain = 1;
 // const int kOneOverGain = 1024*256/8;
 
-const int kFixedPointScaling = 8192;
 
 extern "C" void UDD_Handler(void);
 
 volatile int sLastFrameNumber = 0;
 volatile int32_t sPSDPhaseAccum = 0;
-volatile int32_t gPrevFrameus = -1;
+volatile int32_t gPrevFrameTick = -1;
 
 volatile int gLastDCOControlVal = 0;
 
 volatile bool gUSBBPinState = false;
 
-const int kHighSpeedTimerTicksPerUSBFrame = 1000;
+const int kHighSpeedTimerTicksPerus = 4;
+const int kHighSpeedTimerTicksPerUSBFrame = 1000*kHighSpeedTimerTicksPerus;
+
+const int kOneOverLeadGainus = 1;
+const int kOneOverLagGainus = 8192;
+const int kFixedPointScaling = kOneOverLagGainus*kHighSpeedTimerTicksPerus;
+
 
 extern "C"
 {
@@ -394,7 +399,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    {
    digitalWrite(1, gUSBBPinState = !gUSBBPinState );
    //int32_t SOFtickus = micros();
-   int32_t frameus = ((SysTick->LOAD  - SysTick->VAL)*(1024*1024/(VARIANT_MCK/1000000)))>>20;
+   int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
    if(gState == kWaitingForUSBSOF)
       {
       adcTimer.enable(true);
@@ -403,16 +408,15 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    //frameus in range [0, 1000)
    //usbd.frameNumber();
    sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM;
-   //if(gPrevFrameus >= 0)
+   //if(gPrevFrameTick >= 0)
       {
-      int phase = frameus;
+      int phase = frameTick;
          //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
       if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
          phase -= kHighSpeedTimerTicksPerUSBFrame;
 
 
-      int32_t filterOut = (kFixedPointScaling*phase/2 + sPSDPhaseAccum )/kFixedPointScaling; //(sPSDFreqAccum < 0 ? -(-sPSDFreqAccum+4095)/8192 : (sPSDFreqAccum+4095)/8192);
-      //filterOut = filterOut < 0 ? -(-filterOut + kFixedPointScaling/2)/kFixedPointScaling : (filterOut + kFixedPointScaling/2)/kFixedPointScaling;
+      int32_t filterOut = (phase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + sPSDPhaseAccum)/kFixedPointScaling;
       sPSDPhaseAccum += phase; //integrate the phase to get lag (2nd order) feedback
 
       if(filterOut > kDFLLFineMax)
@@ -428,7 +432,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
       OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
       #endif
       }
-   gPrevFrameus = frameus;
+   gPrevFrameTick = frameTick;
 
    }
 UDD_Handler();
@@ -503,7 +507,7 @@ if(chan - kADCStartChan == 0)
    {
    //val = gLastBit;
    //gLastBit = 1-gLastBit;
-   val = gPrevFrameus;
+   val = gPrevFrameTick;
    if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
       val -= kHighSpeedTimerTicksPerUSBFrame;
    }
