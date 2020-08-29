@@ -2,6 +2,8 @@
 
 #define PHASE_LOCK_TO_USB_SOF 1
 //#define TIMER_OUTPUT_FOR_TEST 1
+#define OUTPUT_USB_SOF_PLL_SIGNALS 1
+
 
 Adafruit_ZeroTimer adcTimer(4);
 
@@ -516,6 +518,7 @@ int val = ADC0->RESULT.reg;
 syncADC0_INPUTCTRL();
 int chan = ADC0->INPUTCTRL.bit.MUXPOS;
 
+#ifdef OUTPUT_USB_SOF_PLL_SIGNALS
 if(chan - kADCStartChan == 0)
    {
    //val = gLastBit;
@@ -528,8 +531,8 @@ else
    {
    val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
    }
-   val += 2048;
-
+val += 2048;
+#endif
 
 //Testing!!
 if(!gSampleBuffers[chan-kADCStartChan].Push(val))
