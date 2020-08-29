@@ -528,7 +528,7 @@ if(chan - kADCStartChan == 0)
    if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
       val -= kHighSpeedTimerTicksPerUSBFrame;
    }
-else
+else if(chan - kADCStartChan == 1)
    {
    val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
    }

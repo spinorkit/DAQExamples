@@ -453,7 +453,7 @@ if(chan - kADCStartChan == 0)
    if(val >= kHighSpeedTimerTicksPerUSBFrame/2)
       val -= kHighSpeedTimerTicksPerUSBFrame;
    }
-else
+else if(chan - kADCStartChan == 1)
    {
    val = gLastDCOControlVal;//OSCCTRL->DFLLVAL.bit.FINE;
    }
@@ -685,7 +685,7 @@ if(hasRx >= 0)
          if(gState == kSampling)
             sendFirstSampleTimeIfNeeded();
          break;
-         
+
       #ifdef ENABLE_DCO_TEST_COMMANDS
       case 'D':
          {
