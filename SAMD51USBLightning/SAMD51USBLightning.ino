@@ -371,18 +371,17 @@ volatile bool gADCstate = false;
  * with the SAMD51.
  * Measured one coarse step to equal 12 fine steps. It was intially 29 out of 64 steps total.
 */
+#if defined(__SAMD51__)
 const int kDFLLFineMax = 127;
 const int kDFLLFineMin = -128;
-
-// const int kLeadGain = 512/4; //(512+128)/2;
-// const int kLagGain = 1;
-// const int kOneOverGain = 1024*256/8;
-
+#else
+const int kDFLLFineMax = 511;
+const int kDFLLFineMin = -512;
+#endif
 
 extern "C" void UDD_Handler(void);
 
 volatile int sLastFrameNumber = 0;
-volatile int32_t sPSDPhaseAccum = 0;
 volatile int32_t gPrevFrameTick = -1;
 
 volatile int gLastDCOControlVal = 0;
@@ -392,9 +391,23 @@ volatile bool gUSBBPinState = false;
 const int kHighSpeedTimerTicksPerus = 4;
 const int kHighSpeedTimerTicksPerUSBFrame = 1000*kHighSpeedTimerTicksPerus;
 
-const int kOneOverLeadGainus = 1;
-const int kOneOverLagGainus = 8192;
+const int kOneOverLeadGainus = 1;   // 1/proportional gain
+
+#if defined(__SAMD51__)
+   const int kOneOverLagGainus = 4096; // 1/integral gain
+   const int kOneOverClippedLeadGainus = 4; 
+#else
+   const int kOneOverLagGainus = 2048; // 1/integral gain
+   const int kOneOverClippedLeadGainus = 1; 
+#endif
 const int kFixedPointScaling = kOneOverLagGainus*kHighSpeedTimerTicksPerus;
+
+//Integrator for integral feedback to remove DC error
+volatile int32_t sPSDPhaseAccum = 0;
+
+//First order LPF for lead (proportional) feedback
+volatile int32_t gLeadPhaseAccum = 0;
+const int kLeadPhaseTC = 16;
 
 
 extern "C"
@@ -406,6 +419,8 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    {
    digitalWrite(1, gUSBBPinState = !gUSBBPinState );
    //int32_t SOFtickus = micros();
+
+   //Measure phase using Cortex cpu timer. Convert to 0.25 us ticks using a runtime multiply and compile time divides for speed.
    int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
    if(gState == kWaitingForUSBSOF)
       {
@@ -418,14 +433,29 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    //if(gPrevFrameTick >= 0)
       {
       int phase = frameTick;
-         //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
+      //phase needs to be bipolar, so wrap values above kHighSpeedTimerTicksPerUSBFrame/2 to be -ve. We want to lock with frameHSTick near 0.
       if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
          phase -= kHighSpeedTimerTicksPerUSBFrame;
 
+      //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
+      gLeadPhaseAccum += phase;
+      int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
+      gLeadPhaseAccum -= leadPhase;
 
-      int32_t filterOut = (phase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + sPSDPhaseAccum)/kFixedPointScaling;
-      sPSDPhaseAccum += phase; //integrate the phase to get lag (2nd order) feedback
+      //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
+      int signOfPhase = 0;
+      if(phase > 0)
+         signOfPhase = 1;
+      else if(phase < 0)
+        signOfPhase = -1;
 
+      //Calculate the filtered error signal
+      int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
+         leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
+         sPSDPhaseAccum)/kFixedPointScaling;
+      sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
+
+      //Clip to limits of DCO
       if(filterOut > kDFLLFineMax)
          filterOut = kDFLLFineMax;
       else if(filterOut < kDFLLFineMin)
@@ -435,8 +465,14 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
 
       gLastDCOControlVal = newDCOControlVal;
 
+      //Set DCO control value
       #ifdef PHASE_LOCK_TO_USB_SOF
+      #if defined(__SAMD51__)
       OSCCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0xff;
+      #else
+      //SAMD21 has 10 bit fine DCO control
+      SYSCTRL->DFLLVAL.bit.FINE = newDCOControlVal & 0x3ff;
+      #endif
       #endif
       }
    gPrevFrameTick = frameTick;
@@ -445,7 +481,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
 UDD_Handler();
 }
 
-}
+} //extern "C"
 
 void setup()
 {
