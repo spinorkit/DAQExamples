@@ -341,7 +341,14 @@ const int kHighSpeedTimerTicksPerus = 4;
 const int kHighSpeedTimerTicksPerUSBFrame = 1000*kHighSpeedTimerTicksPerus;
 
 const int kOneOverLeadGainus = 1;   // 1/proportional gain
-const int kOneOverLagGainus = 2048; // 1/integral gain
+
+#if defined(__SAMD51__)
+   const int kOneOverLagGainus = 4096; // 1/integral gain
+   const int kOneOverClippedLeadGainus = 4; 
+#else
+   const int kOneOverLagGainus = 2048; // 1/integral gain
+   const int kOneOverClippedLeadGainus = 1; 
+#endif
 const int kFixedPointScaling = kOneOverLagGainus*kHighSpeedTimerTicksPerus;
 
 //Integrator for integral feedback to remove DC error
@@ -379,12 +386,12 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
       if(phase >= kHighSpeedTimerTicksPerUSBFrame/2)
          phase -= kHighSpeedTimerTicksPerUSBFrame;
 
-      //First order LPF for lead (proportional) feedback
+      //First order LPF for lead (proportional) feedback (LPF to reduce the effects of phase detector noise)
       gLeadPhaseAccum += phase;
       int leadPhase = gLeadPhaseAccum/kLeadPhaseTC;
       gLeadPhaseAccum -= leadPhase;
 
-      //Unfiltered lead feedback clipped to +/- 1
+      //Unfiltered lead feedback clipped to +/- 1 to reduce the effects of phase detector noise without adding delay
       int signOfPhase = 0;
       if(phase > 0)
          signOfPhase = 1;
@@ -392,7 +399,9 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
         signOfPhase = -1;
 
       //Calculate the filtered error signal
-      int32_t filterOut = signOfPhase + (leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + sPSDPhaseAccum)/kFixedPointScaling;
+      int32_t filterOut = (signOfPhase*kFixedPointScaling/kOneOverClippedLeadGainus + 
+         leadPhase*kFixedPointScaling/(kOneOverLeadGainus*kHighSpeedTimerTicksPerus) + 
+         sPSDPhaseAccum)/kFixedPointScaling;
       sPSDPhaseAccum += phase; //integrate the phase to get lag (integral, 2nd order) feedback
 
       //Clip to limits of DCO
