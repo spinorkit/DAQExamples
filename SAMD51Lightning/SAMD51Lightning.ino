@@ -2,8 +2,8 @@
 
 #define PHASE_LOCK_TO_USB_SOF 1
 //#define TIMER_OUTPUT_FOR_TEST 1
-#define OUTPUT_USB_SOF_PLL_SIGNALS 1
-#define ENABLE_DCO_TEST_COMMANDS 1
+//#define OUTPUT_USB_SOF_PLL_SIGNALS 1
+//#define ENABLE_DCO_TEST_COMMANDS 1
 
 
 Adafruit_ZeroTimer adcTimer(4);
