@@ -10,7 +10,7 @@
  *
  * BSD license, all text above must be included in any redistribution
  */
-#define __SAMD51__
+//#define __SAMD51__
 
 #include "Adafruit_ZeroTimer.h"
 
