@@ -351,7 +351,7 @@ const int kDFLLFineMin = -512;
 
 extern "C" void UDD_Handler(void);
 
-volatile int sLastFrameNumber = 0;
+volatile int16_t gLastFrameNumber = 0;
 volatile int32_t gPrevFrameTick = -1;
 
 volatile int gLastDCOControlVal = 0;
@@ -379,6 +379,7 @@ volatile int32_t sPSDPhaseAccum = 0;
 volatile int32_t gLeadPhaseAccum = 0;
 const int kLeadPhaseTC = 16;
 
+volatile int32_t gLastUSBSOFTimeus = 0;
 
 extern "C"
 {
@@ -387,8 +388,8 @@ void USBHandlerHook(void)
 {
 if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
    {
+   gLastUSBSOFTimeus = micros();
    digitalWrite(1, gUSBBPinState = !gUSBBPinState );
-   //int32_t SOFtickus = micros();
 
    //Measure phase using Cortex cpu timer. Convert to 0.25 us ticks using a runtime multiply and compile time divides for speed.
    int32_t frameTick = ((SysTick->LOAD  - SysTick->VAL)*(kHighSpeedTimerTicksPerus*1024*1024/(VARIANT_MCK/1000000)))>>20;
@@ -399,7 +400,7 @@ if(USB->DEVICE.INTFLAG.bit.SOF) //Start of USB Frame interrupt
       }
    //frameus in range [0, 1000)
    //usbd.frameNumber();
-   sLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM;
+   gLastFrameNumber = USB->DEVICE.FNUM.bit.FNUM;
    //if(gPrevFrameTick >= 0)
       {
       int phase = frameTick;
@@ -687,6 +688,34 @@ protected:
    int32_t mData[1];
 };
 
+class LatestUSBFrameTimePacket : protected PacketBase
+{
+   const char sHeaderAndPacketType[3] = {'P',0xA0,'L'}; //'L' for latest USB Start Of Frame time
+
+public:
+   LatestUSBFrameTimePacket(int32_t tick32us, int16_t frameNumber)
+      {
+      mData[0] = tick32us;
+      mFrameNumber = frameNumber;
+      }
+
+      //returns number of bytes written
+   int write(Stream &stream) const
+      {
+      int n = stream.write(sHeaderAndPacketType, 3);
+      n += stream.write(sPacketCount++);
+      n += stream.write(reinterpret_cast<const uint8_t*>(mData), sizeof(mData));
+      n += stream.write(reinterpret_cast<const uint8_t*>(&mFrameNumber), sizeof(mFrameNumber));
+      return n;
+      }
+
+protected:
+
+   int32_t mData[1];
+   int16_t mFrameNumber;
+};
+
+
 
 void StartSampling()
 {
@@ -823,6 +852,17 @@ if(hasRx >= 0)
 
          //digitalWrite(5, LOW);
 
+         break;
+         }
+      case 'u':   //time of last USB SOF
+         {
+         auto irqState = saveIRQState(); //disable interrupts
+         auto lastUSBSOFTimeus = gLastUSBSOFTimeus;
+         auto lastFrameNumber = gLastFrameNumber;
+         restoreIRQState(irqState);
+         
+         LatestUSBFrameTimePacket packet(lastUSBSOFTimeus, lastFrameNumber);
+         packet.write(Serial);
          break;
          }
       case 'v':   //version info
